@@ -2,12 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const { createObjectCsvWriter } = require('csv-writer');
-const AdvancedScalpingStrategy = require('../strategies/advancedScalping');
+const SimpleScalpingStrategy = require('../strategies/simpleScalping');
 const config = require('../config');
 
 class BinanceCSVBacktester {
     constructor() {
-        this.strategy = new AdvancedScalpingStrategy(config);
+        this.strategy = new SimpleScalpingStrategy(config);
+        this.strategy.setBacktestMode(true); // 🆕 ADD THIS LINE
         this.trades = [];
         this.initialBalance = 1000;
         this.balance = this.initialBalance;
@@ -28,96 +29,144 @@ class BinanceCSVBacktester {
     async runBacktest(symbol, csvFilePath, options = {}) {
         console.log(`🧪 Backtesting ${symbol} with ${csvFilePath}`);
         console.log(`⏰ Using timeframe: ${config.strategy.timeframe}`);
-        
+
         const data = await this.loadBinanceCSVData(csvFilePath);
-        
-        // Resample data to match strategy timeframe if needed
-        const resampledData = this.resampleData(data, config.strategy.timeframe);
-        
-        await this.executeBacktest(symbol, resampledData);
+
+        // 🆕 DETECT AND VALIDATE TIMEFRAME
+        const detectedTimeframe = this.detectSourceTimeframe(data);
+        console.log(`📊 Detected data timeframe: ${detectedTimeframe}`);
+
+        let processedData = data;
+
+        // Only resample if needed and possible
+        if (detectedTimeframe !== config.strategy.timeframe) {
+            console.log(`🔄 Resampling from ${detectedTimeframe} to ${config.strategy.timeframe}...`);
+            processedData = this.resampleData(data, config.strategy.timeframe);
+        } else {
+            console.log(`✅ Using ${detectedTimeframe} data directly - no resampling needed`);
+        }
+
+        await this.executeBacktest(symbol, processedData);
         await this.saveResults(symbol);
         this.printResults(symbol);
     }
 
-loadBinanceCSVData(filePath) {
-    return new Promise((resolve, reject) => {
-        const results = [];
-        let isFirstRow = true; // 🆕 Track first row
-        
-        fs.createReadStream(filePath)
-            .pipe(csv({ headers: false }))
-            .on('data', (data) => {
-                // 🆕 SKIP THE HEADER ROW
-                if (isFirstRow) {
-                    isFirstRow = false;
-                    console.log('📋 Skipping header row:', Object.values(data));
-                    return;
-                }
-                
-                const kline = this.parseBinanceCSVRow(data);
-                if (kline) results.push(kline);
-            })
-            .on('end', () => {
-                console.log(`📊 Loaded ${results.length} raw klines from ${filePath}`);
-                results.sort((a, b) => a.time - b.time);
-                resolve(results);
-            })
-            .on('error', reject);
-    });
-}
+    // 🆕 ADD THIS METHOD TO DETECT SOURCE TIMEFRAME
+    detectSourceTimeframe(data) {
+        if (data.length < 2) return '1m';
 
-parseBinanceCSVRow(row) {
-    try {
-        // Handle both array format and object format from headers
-        let openTime, open, high, low, close, volume;
-        
-        if (Array.isArray(row)) {
-            // Array format: [open_time, open, high, low, close, volume, ...]
-            openTime = parseInt(row[0]);
-            open = parseFloat(row[1]);
-            high = parseFloat(row[2]);
-            low = parseFloat(row[3]);
-            close = parseFloat(row[4]);
-            volume = parseFloat(row[5]);
-        } else {
-            // Object format (from headers): { '0': '1759276800000', '1': '113988.70', ... }
-            openTime = parseInt(row['0'] || row['open_time']);
-            open = parseFloat(row['1'] || row['open']);
-            high = parseFloat(row['2'] || row['high']);
-            low = parseFloat(row['3'] || row['low']);
-            close = parseFloat(row['4'] || row['close']);
-            volume = parseFloat(row['5'] || row['volume']);
+        // Calculate average time difference between candles
+        const timeDiffs = [];
+        for (let i = 1; i < Math.min(data.length, 10); i++) {
+            timeDiffs.push(data[i].time - data[i - 1].time);
         }
 
-        if (!openTime || isNaN(open) || isNaN(close)) {
-            return null;
-        }
+        const avgDiff = timeDiffs.reduce((a, b) => a + b, 0) / timeDiffs.length;
+        const avgMinutes = avgDiff / (60 * 1000);
 
-        // Data validation
-        if (close < 10000 || close > 200000) {
-            return null;
-        }
+        console.log(`🔍 Average time difference between candles: ${avgMinutes.toFixed(1)} minutes`);
 
-        return {
-            time: openTime,
-            open: open,
-            high: high,
-            low: low,
-            close: close,
-            volume: volume,
-            closeTime: parseInt(row['6'] || row['close_time'])
-        };
-    } catch (error) {
-        return null;
+        // Map to common timeframes (with some tolerance)
+        if (avgMinutes >= 1400) return '1d';      // ~24 hours
+        if (avgMinutes >= 350) return '4h';       // 4 hours  
+        if (avgMinutes >= 55) return '1h';        // 1 hour
+        if (avgMinutes >= 13) return '15m';       // 15 minutes
+        if (avgMinutes >= 4.5) return '5m';       // 5 minutes
+        if (avgMinutes >= 2.5) return '3m';       // 3 minutes
+        if (avgMinutes >= 0.5) return '1m';       // 1 minute
+
+        return '1m'; // default
     }
-}
+
+    loadBinanceCSVData(filePath) {
+        return new Promise((resolve, reject) => {
+            const results = [];
+            let isFirstRow = true; // 🆕 Track first row
+
+            fs.createReadStream(filePath)
+                .pipe(csv({ headers: false }))
+                .on('data', (data) => {
+                    // 🆕 SKIP THE HEADER ROW
+                    if (isFirstRow) {
+                        isFirstRow = false;
+                        console.log('📋 Skipping header row:', Object.values(data));
+                        return;
+                    }
+
+                    const kline = this.parseBinanceCSVRow(data);
+                    if (kline) results.push(kline);
+                })
+                .on('end', () => {
+                    console.log(`📊 Loaded ${results.length} raw klines from ${filePath}`);
+                    results.sort((a, b) => a.time - b.time);
+                    resolve(results);
+                })
+                .on('error', reject);
+        });
+    }
+
+    parseBinanceCSVRow(row) {
+        try {
+            // Handle both array format and object format from headers
+            let openTime, open, high, low, close, volume;
+
+            if (Array.isArray(row)) {
+                // Array format: [open_time, open, high, low, close, volume, ...]
+                openTime = parseInt(row[0]);
+                open = parseFloat(row[1]);
+                high = parseFloat(row[2]);
+                low = parseFloat(row[3]);
+                close = parseFloat(row[4]);
+                volume = parseFloat(row[5]);
+            } else {
+                // Object format (from headers): { '0': '1759276800000', '1': '113988.70', ... }
+                openTime = parseInt(row['0'] || row['open_time']);
+                open = parseFloat(row['1'] || row['open']);
+                high = parseFloat(row['2'] || row['high']);
+                low = parseFloat(row['3'] || row['low']);
+                close = parseFloat(row['4'] || row['close']);
+                volume = parseFloat(row['5'] || row['volume']);
+            }
+
+            if (!openTime || isNaN(open) || isNaN(close)) {
+                return null;
+            }
+
+            // Data validation
+            if (close < 10000 || close > 200000) {
+                return null;
+            }
+
+            return {
+                time: openTime,
+                open: open,
+                high: high,
+                low: low,
+                close: close,
+                volume: volume,
+                closeTime: parseInt(row['6'] || row['close_time'])
+            };
+        } catch (error) {
+            return null;
+        }
+    }
 
     resampleData(data, targetTimeframe) {
-        console.log(`🔄 Resampling from 1m to ${targetTimeframe}...`);
-        
-        const timeframeMinutes = this.timeframeToMinutes(targetTimeframe);
-        if (timeframeMinutes === 1) {
-            console.log('✅ Already using 1m data, no resampling needed');
+        const detectedTimeframe = this.detectSourceTimeframe(data);
+        console.log(`🔄 Resampling from ${detectedTimeframe} to ${targetTimeframe}...`);
+
+        const targetMinutes = this.timeframeToMinutes(targetTimeframe);
+        const sourceMinutes = this.timeframeToMinutes(detectedTimeframe);
+
+        // If source and target are the same, no resampling needed
+        if (targetMinutes === sourceMinutes) {
+            console.log(`✅ Already using ${targetTimeframe} data, no resampling needed`);
+            return data;
+        }
+
+        // If target is smaller than source, we can't resample (losing data)
+        if (targetMinutes < sourceMinutes) {
+            console.log(`❌ Cannot resample from ${detectedTimeframe} to ${targetTimeframe} (would lose data)`);
             return data;
         }
 
@@ -127,14 +176,14 @@ parseBinanceCSVRow(row) {
 
         for (const kline of data) {
             const klineTime = kline.time;
-            
+
             // Check if we need to start a new bucket
-            if (!currentBucket || klineTime >= bucketStartTime + (timeframeMinutes * 60 * 1000)) {
+            if (!currentBucket || klineTime >= bucketStartTime + (targetMinutes * 60 * 1000)) {
                 // Save previous bucket if exists
                 if (currentBucket) {
                     resampled.push(currentBucket);
                 }
-                
+
                 // Start new bucket
                 currentBucket = {
                     time: klineTime,
@@ -159,14 +208,14 @@ parseBinanceCSVRow(row) {
             resampled.push(currentBucket);
         }
 
-        console.log(`✅ Resampled to ${resampled.length} ${targetTimeframe} klines`);
+        console.log(`✅ Resampled from ${data.length} ${detectedTimeframe} klines to ${resampled.length} ${targetTimeframe} klines`);
         return resampled;
     }
 
     timeframeToMinutes(timeframe) {
         const unit = timeframe.slice(-1);
         const value = parseInt(timeframe.slice(0, -1));
-        
+
         switch (unit) {
             case 'm': return value; // minutes
             case 'h': return value * 60; // hours
@@ -182,18 +231,20 @@ parseBinanceCSVRow(row) {
         let peakEquity = this.initialBalance;
 
         console.log(`🎯 Starting backtest with ${data.length} klines...`);
+        const WINDOW_SIZE = 300; // Use fixed window instead of growing data
 
         for (let i = 30; i < data.length; i++) {
-            const currentData = data.slice(0, i + 1);
+            const windowStart = Math.max(0, i - WINDOW_SIZE);
+            const currentData = data.slice(windowStart, i + 1);
             const currentKline = data[i];
             const currentPrice = currentKline.close;
 
             // Get strategy signal
             const signal = this.strategy.analyze(currentData, symbol);
-            
+
             // CHECK IF WE CAN OPEN NEW POSITION (like live bot)
             const canOpenNewPosition = positions.length < config.trading.maxOpenPositions;
-            
+
             // ENTRY LOGIC - only if we have room and signal is valid
             if ((signal.signal === 'BUY' || signal.signal === 'SELL') && canOpenNewPosition) {
                 // 🆕 FIX: Check if we already have a position for this symbol
@@ -206,16 +257,16 @@ parseBinanceCSVRow(row) {
                     }
                 }
             }
-            
+
             // EXIT LOGIC - check all open positions
             for (let j = positions.length - 1; j >= 0; j--) {
                 const position = positions[j];
                 const exitReason = this.checkExitConditions(position, currentKline);
-                
+
                 if (exitReason) {
                     await this.exitPosition(position, currentPrice, currentKline.time, exitReason);
                     positions.splice(j, 1); // Remove from open positions
-                    
+
                     // Update equity curve and drawdown
                     equityCurve.push(this.balance);
                     if (this.balance > peakEquity) {
@@ -243,35 +294,29 @@ parseBinanceCSVRow(row) {
         this.calculateAdvancedMetrics(equityCurve);
     }
 
-    enterPosition(symbol, side, entryPrice, entryTime) {
-        // ADD VALIDATION LIKE LIVE BOT
-        const quantity = this.calculatePositionSize(this.balance, entryPrice);
-        
-        // Check minimum notional (like live trading)
-        const minNotional = 10; // Binance futures minimum
-        const notionalValue = quantity * entryPrice;
-        
-        if (notionalValue < minNotional) {
-            console.log(`⏸️ ${symbol}: Notional ${notionalValue.toFixed(2)} below minimum ${minNotional}, skipping`);
-            return null;
-        }
-        
-        // Check if we have enough balance (including leverage)
-        const positionValue = notionalValue / config.trading.leverage;
-        if (positionValue > this.balance * 0.95) { // Leave some buffer
-            console.log(`⏸️ ${symbol}: Insufficient balance for position, skipping`);
-            return null;
-        }
+enterPosition(symbol, side, entryPrice, entryTime) {
+    const quantity = this.calculatePositionSize(this.balance, entryPrice);
+    const notionalValue = quantity * entryPrice;
 
-        return {
-            symbol: symbol,
-            side: side,
-            entryPrice: entryPrice,
-            entryTime: entryTime,
-            quantity: quantity,
-            entryBalance: this.balance
-        };
+    // 🛠️ FIX: Remove or drastically reduce minimum
+    const minNotional = 2; // Reduced from 10 to 2
+    
+    if (notionalValue < minNotional) {
+        console.log(`⏸️ ${symbol}: Notional $${notionalValue.toFixed(2)} below $${minNotional}, skipping`);
+        return null;
     }
+
+    console.log(`✅ ENTER: $${notionalValue.toFixed(2)} position (${quantity.toFixed(6)} coins)`);
+    
+    return {
+        symbol: symbol,
+        side: side,
+        entryPrice: entryPrice,
+        entryTime: entryTime,
+        quantity: quantity,
+        entryBalance: this.balance
+    };
+}
 
     async exitPosition(position, exitPrice, exitTime, exitReason) {
         const profit = this.calculateProfit(position, exitPrice);
@@ -279,6 +324,10 @@ parseBinanceCSVRow(row) {
 
         // 🆕 CRITICAL: Tell the strategy the position closed
         this.strategy.recordExit(position.symbol);
+        // 🆕 ADD THIS LINE - Clear position from strategy tracking
+        if (this.strategy.onPositionClosed) {
+            this.strategy.onPositionClosed(position.symbol);
+        }
         const trade = {
             id: this.trades.length + 1,
             symbol: position.symbol,
@@ -295,7 +344,7 @@ parseBinanceCSVRow(row) {
         };
 
         this.trades.push(trade);
-        
+
         // Update results
         this.results.totalTrades++;
         if (profit > 0) {
@@ -311,21 +360,29 @@ parseBinanceCSVRow(row) {
         console.log(`💰 ${timeStr} - ${position.side} EXIT at ${exitPrice.toFixed(2)} | PnL: $${profit.toFixed(2)} | Reason: ${exitReason}`);
     }
 
-    calculateProfit(position, exitPrice) {
-        const priceDifference = exitPrice - position.entryPrice;
-        let profit = position.side === 'BUY' 
-            ? priceDifference * position.quantity
-            : -priceDifference * position.quantity;
-        
-        // ADD TRADING FEES (0.04% each way for Binance futures)
-        const entryFee = position.entryPrice * position.quantity * 0.0004;
-        const exitFee = exitPrice * position.quantity * 0.0004;
-        const totalFees = entryFee + exitFee;
-        
-        profit -= totalFees;
-        
-        return profit;
-    }
+calculateProfit(position, exitPrice) {
+    const priceDifference = exitPrice - position.entryPrice;
+    let profit = position.side === 'BUY'
+        ? priceDifference * position.quantity
+        : -priceDifference * position.quantity;
+
+    // 🛠️ DEBUG: Show position details
+    console.log(`🔍 POSITION DEBUG:`);
+    console.log(`   Quantity: ${position.quantity.toFixed(6)}`);
+    console.log(`   Entry: $${position.entryPrice.toFixed(2)}`);
+    console.log(`   Exit: $${exitPrice.toFixed(2)}`);
+    console.log(`   Diff: $${priceDifference.toFixed(2)}`);
+    console.log(`   Gross PnL: $${profit.toFixed(2)}`);
+
+    // Fees
+    const entryFee = position.entryPrice * position.quantity * 0.0004;
+    const exitFee = exitPrice * position.quantity * 0.0004;
+    const totalFees = entryFee + exitFee;
+    profit -= totalFees;
+
+    console.log(`   Net PnL: $${profit.toFixed(2)}`);
+    return profit;
+}
 
     calculatePositionSize(balance, price) {
         return this.strategy.calculatePositionSize(balance, price);
@@ -335,8 +392,8 @@ parseBinanceCSVRow(row) {
         const currentPrice = kline.close;
         const currentTime = kline.time;
         const levels = this.strategy.calculateLevels(position.entryPrice, position.side);
-        
-        const timeInTrade = (currentTime - position.entryTime) / (1000 * 60); // minutes
+
+        //const timeInTrade = (currentTime - position.entryTime) / (1000 * 60); // minutes
 
         // TP/SL Check
         if (position.side === 'BUY') {
@@ -348,23 +405,23 @@ parseBinanceCSVRow(row) {
         }
 
         // Time-based exit (using config maxHoldTime)
-        const maxHoldMinutes = (config.strategy.maxHoldTime || 300) / 60;
-        if (timeInTrade > maxHoldMinutes) return 'TIME_EXIT';
+        //const maxHoldMinutes = (config.strategy.maxHoldTime || 300) / 60;
+        //if (timeInTrade > maxHoldMinutes) return 'TIME_EXIT';
 
         return null;
     }
 
     calculateAdvancedMetrics(equityCurve) {
         // Win Rate
-        this.results.winRate = this.results.totalTrades > 0 
-            ? (this.results.winningTrades / this.results.totalTrades) * 100 
+        this.results.winRate = this.results.totalTrades > 0
+            ? (this.results.winningTrades / this.results.totalTrades) * 100
             : 0;
-        
+
         // Profit Factor
         const grossProfit = this.trades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0);
         const grossLoss = Math.abs(this.trades.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0));
         this.results.profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit;
-        
+
         // Sharpe Ratio (simplified)
         const returns = equityCurve.slice(1).map((val, idx) => (val - equityCurve[idx]) / equityCurve[idx]);
         const avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
@@ -376,7 +433,7 @@ parseBinanceCSVRow(row) {
     async saveResults(symbol) {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const resultsDir = path.join(__dirname, 'results');
-        
+
         if (!fs.existsSync(resultsDir)) {
             fs.mkdirSync(resultsDir, { recursive: true });
         }
@@ -386,18 +443,18 @@ parseBinanceCSVRow(row) {
             const tradesWriter = createObjectCsvWriter({
                 path: path.join(resultsDir, `${symbol}-trades-${timestamp}.csv`),
                 header: [
-                    {id: 'id', title: 'ID'},
-                    {id: 'symbol', title: 'Symbol'},
-                    {id: 'side', title: 'Side'},
-                    {id: 'entryPrice', title: 'Entry Price'},
-                    {id: 'exitPrice', title: 'Exit Price'},
-                    {id: 'quantity', title: 'Quantity'},
-                    {id: 'pnl', title: 'PnL'},
-                    {id: 'pnlPercent', title: 'PnL %'},
-                    {id: 'entryTime', title: 'Entry Time'},
-                    {id: 'exitTime', title: 'Exit Time'},
-                    {id: 'duration', title: 'Duration (min)'},
-                    {id: 'exitReason', title: 'Exit Reason'}
+                    { id: 'id', title: 'ID' },
+                    { id: 'symbol', title: 'Symbol' },
+                    { id: 'side', title: 'Side' },
+                    { id: 'entryPrice', title: 'Entry Price' },
+                    { id: 'exitPrice', title: 'Exit Price' },
+                    { id: 'quantity', title: 'Quantity' },
+                    { id: 'pnl', title: 'PnL' },
+                    { id: 'pnlPercent', title: 'PnL %' },
+                    { id: 'entryTime', title: 'Entry Time' },
+                    { id: 'exitTime', title: 'Exit Time' },
+                    { id: 'duration', title: 'Duration (min)' },
+                    { id: 'exitReason', title: 'Exit Reason' }
                 ]
             });
 
@@ -432,7 +489,7 @@ parseBinanceCSVRow(row) {
         console.log(`Initial Balance: $${this.initialBalance.toFixed(2)}`);
         console.log(`Final Balance: $${this.balance.toFixed(2)}`);
         console.log(`Total Return: ${((this.balance - this.initialBalance) / this.initialBalance * 100).toFixed(2)}%`);
-        
+
         console.log('\n📈 Performance Metrics:');
         console.log(`Total Trades: ${this.results.totalTrades}`);
         console.log(`Win Rate: ${this.results.winRate.toFixed(1)}%`);
@@ -442,13 +499,13 @@ parseBinanceCSVRow(row) {
         console.log(`Largest Win: $${this.results.largestWin.toFixed(2)}`);
         console.log(`Largest Loss: $${this.results.largestLoss.toFixed(2)}`);
         console.log(`Average Trade: $${this.results.totalTrades > 0 ? (this.results.totalProfit / this.results.totalTrades).toFixed(2) : 0}`);
-        
+
         // Trade duration stats
         if (this.trades.length > 0) {
             const avgDuration = this.trades.reduce((sum, t) => sum + t.duration, 0) / this.trades.length;
             console.log(`Average Trade Duration: ${avgDuration.toFixed(1)} minutes`);
         }
-        
+
         console.log('='.repeat(70));
     }
 }

@@ -1,9 +1,8 @@
 require('dotenv').config();
 
 const config = {
-    // Environment: 'testnet' or 'mainnet'
     environment: process.env.BOT_ENVIRONMENT || 'testnet',
-    // API Configuration
+    
     binance: {
         testnet: {
             apiKey: process.env.BINANCE_TESTNET_API_KEY,
@@ -19,54 +18,35 @@ const config = {
         }
     },
 
-    // Trading Configuration - OPTIMIZED FOR SCALPING
-    trading: {
-        symbols: ['BTCUSDT', 'ETHUSDT','DOGEUSDT'], // Focus on most liquid pairs for scalping
-        leverage: 10,                    // Higher leverage for smaller moves
-        maxPositionSize: 200, 
-        maxOpenPositions: 4,             // More concurrent positions for scalping
-        positionPercent: 1,              // Smaller positions (1% instead of 2%)
-        minPositionValue: 50,             // Lower minimum for more frequent trades
-        marginMode: 'ISOLATED'           // 🆕 ADD THIS LINE - 'ISOLATED' or 'CROSSED'
-    },
+risk: {
+    stopLossPercent: 0.50,     // 0.50% stop loss (wider for 15m)
+    takeProfitPercent: 1.00,   // 1.00% take profit (2:1 ratio)
+    maxDailyLoss: 100,         // Higher for testing
+},
 
-    // Risk Management - TIGHTER FOR SCALPING
-    risk: {
-        maxDailyLoss: 30,                // Lower daily loss limit
-        stopLossPercent: 0.8,            // Tighter stop loss (0.8%)
-        takeProfitPercent: 1.5,          // Lower take profit (1.5%)
-        trailingStopPercent: 0.3,        // Tighter trailing stop
-    },
+trading: {
+    symbols: ['BTCUSDT'],
+    leverage: 3,
+    positionPercent: 2.0,      // 2% risk per trade
+    minPositionValue: 20,
+    maxPositionSize: 500,
+    maxOpenPositions: 1,
+    marginMode: 'ISOLATED'
+},
 
-    // Strategy Configuration - PERFECTLY MATCHED WITH YOUR STRATEGY
-    strategy: {
-        name: 'advanced_scalping',
-        timeframe: '1m',                 // Fast timeframe for scalping
-        
-        // EMA Parameters - FAST for scalping
-        fastEMA: 3,
-        slowEMA: 8,
-        
-        // RSI Parameters - EXTREME for scalping
-        rsiPeriod: 10,
-        rsiOversold: 25,
-        rsiOverbought: 75,
-        
-        // Volume & Momentum
-        volumeThreshold: 0.8,
-        momentumThreshold: 0.05,
-        maxHoldTime: 300,                // 5 minutes max hold
-        
-        // MACD is hardcoded in strategy (8,21,5) - perfect for scalping
-    }
+strategy: {
+    name: 'simple_scalping',
+    timeframe: '15m',
+    minTimeBetweenTrades: 60 * 60 * 1000,  // 1 hour between trades for quality
+    maxHoldTime: 8 * 60 * 60 * 1000        // Max 8 hours hold time
+}
+
 };
 
-// Get current environment config
 config.getCurrentConfig = function () {
     return this.binance[this.environment];
 };
 
-// Validate configuration
 config.validate = function () {
     const currentConfig = this.getCurrentConfig();
     if (!currentConfig.apiKey || !currentConfig.secretKey) {

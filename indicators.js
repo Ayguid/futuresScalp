@@ -6,94 +6,74 @@ class Indicators {
         return sum / period;
     }
 
-    // Exponential Moving Average
+    // Exponential Moving Average - FIXED
     static EMA(data, period) {
         if (data.length < period) return null;
         
-        let ema = data[0];
+        // Start with SMA as first EMA value
+        let ema = this.SMA(data.slice(0, period), period);
         const multiplier = 2 / (period + 1);
         
-        for (let i = 1; i < data.length; i++) {
-            ema = (data[i] - ema) * multiplier + ema;
+        // Calculate EMA for remaining values
+        for (let i = period; i < data.length; i++) {
+            ema = (data[i] * multiplier) + (ema * (1 - multiplier));
         }
         
         return ema;
     }
 
-    // Relative Strength Index
+    // Relative Strength Index - FIXED (more accurate calculation)
     static RSI(data, period = 14) {
+        if (data.length < period + 1) return null;
+
+        let gains = [];
+        let losses = [];
+
+        // Calculate price changes
+        for (let i = 1; i < data.length; i++) {
+            const change = data[i] - data[i - 1];
+            gains.push(change > 0 ? change : 0);
+            losses.push(change < 0 ? Math.abs(change) : 0);
+        }
+
+        // Calculate initial averages
+        let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+        let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+
+        // Handle edge case where avgLoss is 0
+        if (avgLoss === 0) return 100;
+
+        // Calculate subsequent values using Wilder's smoothing
+        for (let i = period; i < gains.length; i++) {
+            avgGain = ((avgGain * (period - 1)) + gains[i]) / period;
+            avgLoss = ((avgLoss * (period - 1)) + losses[i]) / period;
+        }
+
+        const rs = avgGain / avgLoss;
+        return 100 - (100 / (1 + rs));
+    }
+
+    // Simple RSI for quick calculations (less accurate but faster)
+    static simpleRSI(data, period = 14) {
         if (data.length < period + 1) return null;
 
         let gains = 0;
         let losses = 0;
 
-        // Calculate initial gains and losses
-        for (let i = 1; i <= period; i++) {
-            const difference = data[i] - data[i - 1];
-            if (difference >= 0) {
-                gains += difference;
-            } else {
-                losses -= difference;
-            }
+        // Calculate only the most recent period
+        for (let i = data.length - period; i < data.length; i++) {
+            const change = data[i] - data[i - 1];
+            if (change > 0) gains += change;
+            else losses -= change;
         }
 
-        let avgGain = gains / period;
-        let avgLoss = losses / period;
-
-        // Calculate subsequent values
-        for (let i = period + 1; i < data.length; i++) {
-            const difference = data[i] - data[i - 1];
-            
-            if (difference >= 0) {
-                avgGain = (avgGain * (period - 1) + difference) / period;
-                avgLoss = (avgLoss * (period - 1)) / period;
-            } else {
-                avgGain = (avgGain * (period - 1)) / period;
-                avgLoss = (avgLoss * (period - 1) - difference) / period;
-            }
-        }
+        const avgGain = gains / period;
+        const avgLoss = losses / period;
 
         if (avgLoss === 0) return 100;
         const rs = avgGain / avgLoss;
         return 100 - (100 / (1 + rs));
     }
-
-    // MACD
-// MACD - Fixed version
-static MACD(data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-    if (data.length < slowPeriod + signalPeriod) return null;
-
-    // Calculate MACD line
-    const fastEMA = this.EMA(data, fastPeriod);
-    const slowEMA = this.EMA(data, slowPeriod);
-    
-    if (fastEMA === null || slowEMA === null) return null;
-    
-    const macdLine = fastEMA - slowEMA;
-    
-    // Calculate signal line (EMA of MACD line)
-    // We need historical MACD values for this
-    const macdHistory = [];
-    for (let i = slowPeriod; i < data.length; i++) {
-        const slice = data.slice(0, i + 1);
-        const fast = this.EMA(slice, fastPeriod);
-        const slow = this.EMA(slice, slowPeriod);
-        if (fast && slow) {
-            macdHistory.push(fast - slow);
-        }
-    }
-    
-    if (macdHistory.length < signalPeriod) return null;
-    
-    const signalLine = this.EMA(macdHistory, signalPeriod);
-    const histogram = macdLine - signalLine;
-    
-    return {
-        macd: macdLine,
-        signalLine: signalLine,
-        histogram: histogram
-    };
-}
 
     // Bollinger Bands
     static BollingerBands(data, period = 20, stdDev = 2) {
@@ -109,6 +89,52 @@ static MACD(data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
             middle: mean,
             lower: mean - (standardDeviation * stdDev)
         };
+    }
+
+    // 🆕 ADD THESE HELPER INDICATORS FOR SCALPING
+
+    // Average True Range - for volatility measurement
+    static ATR(highs, lows, closes, period = 14) {
+        if (highs.length < period + 1) return null;
+        
+        const trueRanges = [];
+        for (let i = 1; i < highs.length; i++) {
+            const tr1 = highs[i] - lows[i];
+            const tr2 = Math.abs(highs[i] - closes[i - 1]);
+            const tr3 = Math.abs(lows[i] - closes[i - 1]);
+            trueRanges.push(Math.max(tr1, tr2, tr3));
+        }
+        
+        return this.SMA(trueRanges, period);
+    }
+
+    // Volume Weighted Moving Average
+    static VWMA(closes, volumes, period = 20) {
+        if (closes.length < period || volumes.length < period) return null;
+        
+        const closeSlice = closes.slice(-period);
+        const volumeSlice = volumes.slice(-period);
+        
+        let sumPV = 0;
+        let sumV = 0;
+        
+        for (let i = 0; i < period; i++) {
+            sumPV += closeSlice[i] * volumeSlice[i];
+            sumV += volumeSlice[i];
+        }
+        
+        return sumPV / sumV;
+    }
+
+    // 🆕 TREND STRENGTH INDICATOR
+    static trendStrength(closes, fastPeriod = 8, slowPeriod = 21) {
+        const fastEMA = this.EMA(closes, fastPeriod);
+        const slowEMA = this.EMA(closes, slowPeriod);
+        
+        if (!fastEMA || !slowEMA) return 0;
+        
+        // Returns values from -1 (strong downtrend) to +1 (strong uptrend)
+        return (fastEMA - slowEMA) / slowEMA;
     }
 }
 

@@ -6,13 +6,13 @@ async function main() {
     const backtester = new BinanceCSVBacktester();
     
     // File is in the same 'data' folder within backtesting
-    const csvFilePath = path.join(__dirname, 'data/BTCUSDT-1m-2024-01.csv');
+    const csvFilePath = path.join(__dirname, 'data/BTCUSDT-15m-2025-10.csv');
     
     // Check if file exists first
     if (!fs.existsSync(csvFilePath)) {
         console.log('❌ CSV file not found:', csvFilePath);
         console.log('\n📥 Please download the data first:');
-        console.log('https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/1m/BTCUSDT-1m-2024-01.zip');
+        //console.log('https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-5m-2025-10.zip');
         console.log('\n💡 Extract the CSV file to:', path.resolve(csvFilePath));
         console.log('\n📁 Current working directory:', __dirname);
         
@@ -51,7 +51,7 @@ async function main() {
         
         if (error.message.includes('ENOENT') || error.message.includes('file')) {
             console.log('\n💡 Solution: Download the data from:');
-            console.log('https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/1m/');
+            console.log('https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/5m/');
         }
     }
 }
