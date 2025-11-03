@@ -1,0 +1,110 @@
+Here are optimized configs for each strategy:
+
+1. EMA Crossover Strategy Config
+javascript
+strategy: {
+    name: 'ema_crossover',
+    timeframe: '3m',      // Good for swing trades
+    fastEMA: 9,
+    slowEMA: 21,
+    
+    // Trading settings specific to EMA
+    trailingStopPercent: 0.8,  // Use trailing stops for trend following
+    maxHoldTime: 1800,         // 30 minutes max hold
+},
+trading: {
+    symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT'],
+    leverage: 5,
+    maxPositionSize: 300,
+    maxOpenPositions: 2,       // Fewer concurrent positions
+    positionPercent: 3,        // Larger positions for trends
+    minPositionValue: 100
+},
+risk: {
+    maxDailyLoss: 60,
+    stopLossPercent: 1.5,      // Wider stops for trends
+    takeProfitPercent: 3.0,    // Higher targets for trends
+}
+2. MACD Strategy Config
+javascript
+strategy: {
+    name: 'macd',
+    timeframe: '5m',           // MACD works better on slightly longer timeframes
+    fastPeriod: 12,
+    slowPeriod: 26,
+    signalPeriod: 9,
+    
+    // MACD specific settings
+    histogramThreshold: 0.001, // Minimum histogram value for signal
+    divergenceLookback: 10,    // Bars to look back for divergence
+},
+trading: {
+    symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
+    leverage: 5,
+    maxPositionSize: 250,
+    maxOpenPositions: 2,
+    positionPercent: 2.5,
+    minPositionValue: 120
+},
+risk: {
+    maxDailyLoss: 50,
+    stopLossPercent: 1.2,
+    takeProfitPercent: 2.5,
+    trailingStopPercent: 0.6
+}
+3. Momentum Scalping Strategy Config
+javascript
+strategy: {
+    name: 'momentum_scalping',
+    timeframe: '1m',           // Fast timeframe for momentum
+    breakoutPeriod: 5,         // Lookback for breakouts
+    minRSI: 25,               // RSI filter for entries
+    maxRSI: 75,
+    volumeThreshold: 1.3,      // Volume confirmation
+    maxHoldTime: 180,          // 3 minutes max for momentum trades
+},
+trading: {
+    symbols: ['BTCUSDT', 'ETHUSDT'], // Only high liquidity pairs
+    leverage: 10,
+    maxPositionSize: 150,
+    maxOpenPositions: 4,       // More positions for momentum
+    positionPercent: 1.5,      // Medium position size
+    minPositionValue: 75
+},
+risk: {
+    maxDailyLoss: 40,
+    stopLossPercent: 0.7,      // Tighter stops for momentum
+    takeProfitPercent: 1.8,    // Quick profits
+    trailingStopPercent: 0.4   // Tight trailing
+}
+4. RSI Strategy Config
+javascript
+strategy: {
+    name: 'rsi',
+    timeframe: '3m',           // Good balance for RSI
+    rsiPeriod: 14,
+    rsiOversold: 30,
+    rsiOverbought: 70,
+    
+    // RSI specific settings
+    useDivergence: true,       // Look for RSI divergence
+    reentryThreshold: 5,       // Points away from extreme to re-enter
+    maxReversals: 2,           // Max reversal trades per symbol
+},
+trading: {
+    symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'DOTUSDT'],
+    leverage: 5,
+    maxPositionSize: 200,
+    maxOpenPositions: 3,
+    positionPercent: 2,
+    minPositionValue: 90
+},
+risk: {
+    maxDailyLoss: 45,
+    stopLossPercent: 1.0,
+    takeProfitPercent: 2.0,
+    trailingStopPercent: 0.5
+}
+
+
+4983.71
