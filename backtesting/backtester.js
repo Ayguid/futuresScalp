@@ -277,6 +277,8 @@ parseBinanceCSVRow(row) {
         const profit = this.calculateProfit(position, exitPrice);
         this.balance += profit;
 
+        // 🆕 CRITICAL: Tell the strategy the position closed
+        this.strategy.recordExit(position.symbol);
         const trade = {
             id: this.trades.length + 1,
             symbol: position.symbol,

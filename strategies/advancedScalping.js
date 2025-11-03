@@ -1,6 +1,8 @@
 const BaseStrategy = require('./baseStrategy');
 const Indicators = require('../indicators');
 
+const DEBUG = false;
+
 class AdvancedScalpingStrategy extends BaseStrategy {
     constructor(config) {
         super(config);
@@ -18,139 +20,140 @@ class AdvancedScalpingStrategy extends BaseStrategy {
         this.momentumThreshold = config.strategy.momentumThreshold || 0.05;
     }
 
-analyze(data, symbol = '') {
-    const closes = data.map(d => d.close);
-    const volumes = data.map(d => d.volume);
-    const currentTime = Date.now();
-        
-    if (closes.length < 30) {
-        return { signal: 'HOLD', reason: 'Insufficient data' };
-    }
+    analyze(data, symbol = '') {
+        const closes = data.map(d => d.close);
+        const volumes = data.map(d => d.volume);
+        const currentTime = data[data.length - 1].time; // ✅ USE THE KLINE TIMESTAMP
+            
+        if (closes.length < 30) {
+            return { signal: 'HOLD', reason: 'Insufficient data' };
+        }
 
-    const currentPrice = closes[closes.length - 1];
+        const currentPrice = closes[closes.length - 1];
 
-    // Check for existing position first
-    if (symbol && this.hasActivePosition(symbol) && !this.config.backtesting) {
-        if (this.shouldExitByTime(symbol, currentTime)) {
-            this.recordExit(symbol);
+        // Check for existing position first
+        if (symbol && this.hasActivePosition(symbol)) {
+            if (this.shouldExitByTime(symbol, currentTime)) {
+                this.recordExit(symbol);
+                return { 
+                    signal: 'EXIT', 
+                    reason: `Max hold time (${this.maxHoldTime}s) exceeded`,
+                    price: currentPrice
+                };
+            }
             return { 
-                signal: 'EXIT', 
-                reason: `Max hold time (${this.maxHoldTime}s) exceeded`,
+                signal: 'HOLD', 
+                reason: 'Position active, waiting for TP/SL or time exit',
                 price: currentPrice
             };
         }
+
+        // Multiple indicators
+        const fastEMA = Indicators.EMA(closes, this.fastEMA);
+        const slowEMA = Indicators.EMA(closes, this.slowEMA);
+        const rsi = Indicators.RSI(closes, this.rsiPeriod);
+        const macd = Indicators.MACD(closes, 8, 21, 5);
+        const volumeStrength = this.calculateVolumeStrength(volumes);
+        const priceMomentum = this.calculateMomentum(closes);
+
+        if (!fastEMA || !slowEMA || !rsi || !macd) {
+            return { signal: 'HOLD', reason: 'Indicator calculation failed' };
+        }
+
+        // 🆕 FORCE DEBUG - LOG EVERY ANALYSIS FOR FIRST 1000 POINTS
+        if (closes.length <= 1000 && DEBUG) {
+            console.log(`\n🔍 ${symbol} STRATEGY DEBUG - Analysis #${closes.length}:`);
+            console.log(`   Price: ${currentPrice}`);
+            console.log(`   EMA ${this.fastEMA}/${this.slowEMA}: ${fastEMA.toFixed(1)} vs ${slowEMA.toFixed(1)} (${fastEMA > slowEMA ? 'BULL' : 'BEAR'})`);
+            console.log(`   RSI ${this.rsiPeriod}: ${rsi.toFixed(1)} (need ${this.rsiOversold}-${this.rsiOverbought}) ${rsi > this.rsiOversold && rsi < this.rsiOverbought ? '✅' : '❌'}`);
+            console.log(`   MACD Line: ${macd.macd.toFixed(4)} vs Signal: ${macd.signalLine.toFixed(4)} (${macd.macd > macd.signalLine ? 'BULL' : 'BEAR'})`);
+            console.log(`   MACD Histogram: ${macd.histogram.toFixed(4)} ${macd.histogram > 0 ? 'POSITIVE' : 'NEGATIVE'}`);
+            console.log(`   Volume Strength: ${volumeStrength.toFixed(2)}x (threshold: ${this.volumeThreshold})`);
+            console.log(`   Price Momentum: ${priceMomentum.toFixed(2)}%`);
+        }
+
+        // BULLISH: Multiple confirmations required
+        const bullishConfirmations = [
+            fastEMA > slowEMA,
+            rsi > this.rsiOversold && rsi < this.rsiOverbought,
+            macd.macd > macd.signalLine,
+            macd.histogram > 0,
+            volumeStrength > this.volumeThreshold,
+            priceMomentum > this.momentumThreshold || 0.05
+        ];
+
+        // BEARISH: Multiple confirmations required
+        const bearishConfirmations = [
+            fastEMA < slowEMA,
+            rsi > this.rsiOversold && rsi < this.rsiOverbought,
+            macd.macd < macd.signalLine,
+            macd.histogram < 0,
+            volumeStrength > this.volumeThreshold,
+            priceMomentum < -(this.momentumThreshold || 0.05)
+        ];
+
+        const bullishScore = bullishConfirmations.filter(Boolean).length;
+        const bearishScore = bearishConfirmations.filter(Boolean).length;
+
+        // 🆕 ALWAYS LOG SCORES FOR FIRST 1000 POINTS
+        if (closes.length <= 1000) {
+            console.log(`   🎯 Bull Score: ${bullishScore}/6, Bear Score: ${bearishScore}/6`);
+            console.log(`   📊 Need ${this.minConfirmationScore || 3}/6 for trade`);
+            
+            // Show which conditions passed/failed
+            console.log(`   📋 Bull Conditions: EMA=${fastEMA > slowEMA ? '✅' : '❌'} RSI=${rsi > this.rsiOversold && rsi < this.rsiOverbought ? '✅' : '❌'} MACD=${macd.macd > macd.signalLine ? '✅' : '❌'} Hist=${macd.histogram > 0 ? '✅' : '❌'} Vol=${volumeStrength > this.volumeThreshold ? '✅' : '❌'} Mom=${priceMomentum > (this.momentumThreshold || 0.05) ? '✅' : '❌'}`);
+            console.log(`   📋 Bear Conditions: EMA=${fastEMA < slowEMA ? '✅' : '❌'} RSI=${rsi > this.rsiOversold && rsi < this.rsiOverbought ? '✅' : '❌'} MACD=${macd.macd < macd.signalLine ? '✅' : '❌'} Hist=${macd.histogram < 0 ? '✅' : '❌'} Vol=${volumeStrength > this.volumeThreshold ? '✅' : '❌'} Mom=${priceMomentum < -(this.momentumThreshold || 0.05) ? '✅' : '❌'}`);
+        }
+
+        // Require at least 3 out of 6 confirmations
+        const minScore = this.minConfirmationScore || 3;
+        if (bullishScore >= minScore && this.previousSignal !== 'BUY') {
+            this.previousSignal = 'BUY';
+            if (symbol) this.recordEntry(symbol);
+            console.log(`🎯 ${new Date(currentTime).toISOString()} - BUY SIGNAL! Score: ${bullishScore}/6`);
+
+            return { 
+                signal: 'BUY', 
+                reason: `Multi-confirmation bullish (${bullishScore}/6)`,
+                price: currentPrice,
+                indicators: { 
+                    fastEMA, 
+                    slowEMA, 
+                    rsi, 
+                    macd: macd.macd, 
+                    signalLine: macd.signalLine,
+                    volumeStrength, 
+                    priceMomentum 
+                }
+            };
+        }
+
+        if (bearishScore >= minScore && this.previousSignal !== 'SELL') {
+            this.previousSignal = 'SELL';
+            if (symbol) this.recordEntry(symbol);
+            console.log(`🎯 ${new Date(currentTime).toISOString()} - SELL SIGNAL! Score: ${bearishScore}/6`);
+            return { 
+                signal: 'SELL', 
+                reason: `Multi-confirmation bearish (${bearishScore}/6)`,
+                price: currentPrice,
+                indicators: { 
+                    fastEMA, 
+                    slowEMA, 
+                    rsi, 
+                    macd: macd.macd, 
+                    signalLine: macd.signalLine,
+                    volumeStrength, 
+                    priceMomentum 
+                }
+            };
+        }
+
         return { 
             signal: 'HOLD', 
-            reason: 'Position active, waiting for TP/SL or time exit',
-            price: currentPrice
+            reason: `Insufficient confirmation (Bull:${bullishScore}/6, Bear:${bearishScore}/6)`,
+            indicators: { fastEMA, slowEMA, rsi, volumeStrength, priceMomentum }
         };
     }
-
-    // Multiple indicators
-    const fastEMA = Indicators.EMA(closes, this.fastEMA);
-    const slowEMA = Indicators.EMA(closes, this.slowEMA);
-    const rsi = Indicators.RSI(closes, this.rsiPeriod);
-    const macd = Indicators.MACD(closes, 8, 21, 5);
-    const volumeStrength = this.calculateVolumeStrength(volumes);
-    const priceMomentum = this.calculateMomentum(closes);
-
-    if (!fastEMA || !slowEMA || !rsi || !macd) {
-        return { signal: 'HOLD', reason: 'Indicator calculation failed' };
-    }
-
-    // 🆕 FORCE DEBUG - LOG EVERY ANALYSIS FOR FIRST 1000 POINTS
-    if (closes.length <= 1000) {
-        console.log(`\n🔍 ${symbol} STRATEGY DEBUG - Analysis #${closes.length}:`);
-        console.log(`   Price: ${currentPrice}`);
-        console.log(`   EMA ${this.fastEMA}/${this.slowEMA}: ${fastEMA.toFixed(1)} vs ${slowEMA.toFixed(1)} (${fastEMA > slowEMA ? 'BULL' : 'BEAR'})`);
-        console.log(`   RSI ${this.rsiPeriod}: ${rsi.toFixed(1)} (need ${this.rsiOversold}-${this.rsiOverbought}) ${rsi > this.rsiOversold && rsi < this.rsiOverbought ? '✅' : '❌'}`);
-        console.log(`   MACD Line: ${macd.macd.toFixed(4)} vs Signal: ${macd.signalLine.toFixed(4)} (${macd.macd > macd.signalLine ? 'BULL' : 'BEAR'})`);
-        console.log(`   MACD Histogram: ${macd.histogram.toFixed(4)} ${macd.histogram > 0 ? 'POSITIVE' : 'NEGATIVE'}`);
-        console.log(`   Volume Strength: ${volumeStrength.toFixed(2)}x (threshold: ${this.volumeThreshold})`);
-        console.log(`   Price Momentum: ${priceMomentum.toFixed(2)}%`);
-    }
-
-    // BULLISH: Multiple confirmations required
-    const bullishConfirmations = [
-        fastEMA > slowEMA,
-        rsi > this.rsiOversold && rsi < this.rsiOverbought,
-        macd.macd > macd.signalLine,
-        macd.histogram > 0,
-        volumeStrength > this.volumeThreshold,
-        priceMomentum > this.momentumThreshold || 0.05
-    ];
-
-    // BEARISH: Multiple confirmations required
-    const bearishConfirmations = [
-        fastEMA < slowEMA,
-        rsi > this.rsiOversold && rsi < this.rsiOverbought,
-        macd.macd < macd.signalLine,
-        macd.histogram < 0,
-        volumeStrength > this.volumeThreshold,
-        priceMomentum < -(this.momentumThreshold || 0.05)
-    ];
-
-    const bullishScore = bullishConfirmations.filter(Boolean).length;
-    const bearishScore = bearishConfirmations.filter(Boolean).length;
-
-    // 🆕 ALWAYS LOG SCORES FOR FIRST 1000 POINTS
-    if (closes.length <= 1000) {
-        console.log(`   🎯 Bull Score: ${bullishScore}/6, Bear Score: ${bearishScore}/6`);
-        console.log(`   📊 Need ${this.minConfirmationScore || 3}/6 for trade`);
-        
-        // Show which conditions passed/failed
-        console.log(`   📋 Bull Conditions: EMA=${fastEMA > slowEMA ? '✅' : '❌'} RSI=${rsi > this.rsiOversold && rsi < this.rsiOverbought ? '✅' : '❌'} MACD=${macd.macd > macd.signalLine ? '✅' : '❌'} Hist=${macd.histogram > 0 ? '✅' : '❌'} Vol=${volumeStrength > this.volumeThreshold ? '✅' : '❌'} Mom=${priceMomentum > (this.momentumThreshold || 0.05) ? '✅' : '❌'}`);
-        console.log(`   📋 Bear Conditions: EMA=${fastEMA < slowEMA ? '✅' : '❌'} RSI=${rsi > this.rsiOversold && rsi < this.rsiOverbought ? '✅' : '❌'} MACD=${macd.macd < macd.signalLine ? '✅' : '❌'} Hist=${macd.histogram < 0 ? '✅' : '❌'} Vol=${volumeStrength > this.volumeThreshold ? '✅' : '❌'} Mom=${priceMomentum < -(this.momentumThreshold || 0.05) ? '✅' : '❌'}`);
-    }
-
-    // Require at least 3 out of 6 confirmations
-    const minScore = this.minConfirmationScore || 3;
-    if (bullishScore >= minScore && this.previousSignal !== 'BUY') {
-        this.previousSignal = 'BUY';
-        if (symbol) this.recordEntry(symbol);
-        console.log(`🎯 ${new Date().toISOString()} - BUY SIGNAL! Score: ${bullishScore}/6`);
-        return { 
-            signal: 'BUY', 
-            reason: `Multi-confirmation bullish (${bullishScore}/6)`,
-            price: currentPrice,
-            indicators: { 
-                fastEMA, 
-                slowEMA, 
-                rsi, 
-                macd: macd.macd, 
-                signalLine: macd.signalLine,
-                volumeStrength, 
-                priceMomentum 
-            }
-        };
-    }
-
-    if (bearishScore >= minScore && this.previousSignal !== 'SELL') {
-        this.previousSignal = 'SELL';
-        if (symbol) this.recordEntry(symbol);
-        console.log(`🎯 ${new Date().toISOString()} - SELL SIGNAL! Score: ${bearishScore}/6`);
-        return { 
-            signal: 'SELL', 
-            reason: `Multi-confirmation bearish (${bearishScore}/6)`,
-            price: currentPrice,
-            indicators: { 
-                fastEMA, 
-                slowEMA, 
-                rsi, 
-                macd: macd.macd, 
-                signalLine: macd.signalLine,
-                volumeStrength, 
-                priceMomentum 
-            }
-        };
-    }
-
-    return { 
-        signal: 'HOLD', 
-        reason: `Insufficient confirmation (Bull:${bullishScore}/6, Bear:${bearishScore}/6)`,
-        indicators: { fastEMA, slowEMA, rsi, volumeStrength, priceMomentum }
-    };
-}
     // 🆕 ADD THIS METHOD to track active positions
     hasActivePosition(symbol) {
         return this.entryTimes.has(symbol);

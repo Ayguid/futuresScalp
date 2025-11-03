@@ -3,7 +3,6 @@ require('dotenv').config();
 const config = {
     // Environment: 'testnet' or 'mainnet'
     environment: process.env.BOT_ENVIRONMENT || 'testnet',
-    backtesting: true,
     // API Configuration
     binance: {
         testnet: {

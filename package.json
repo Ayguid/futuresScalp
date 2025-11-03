@@ -1,4 +1,13 @@
 {
+  "name": "binance-scalping-bot",
+  "version": "1.0.0",
+  "description": "Advanced scalping bot for Binance Futures",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "backtest": "node backtesting/runner.js",
+    "dev": "nodemon index.js"
+  },
   "dependencies": {
     "axios": "^1.13.1",
     "crypto-js": "^4.2.0",
