@@ -1,5 +1,7 @@
 const BinanceClient = require('./binanceClient');
-const StrategyFactory = require('./strategies/strategyFactory')
+const StrategyFactory = require('./strategies/strategyFactory');
+const PerformanceTracker = require('./utils/performanceTracker');
+
 const config = require('./config');
 
 class ScalpingBot {
@@ -339,6 +341,18 @@ async placeStopLossAndTakeProfit(symbol, side, quantity, levels) {
 
                 if (!stillOpen) {
                     console.log(`✅ ${position.symbol} Position closed (likely by TP/SL)`);
+                    // Record trade result for performance tracking
+                    const exitPrice = await this.client.getLastPrice(position.symbol);
+                    PerformanceTracker.recordTrade(
+                        position.symbol,
+                        position.side,
+                        position.entryPrice,
+                        exitPrice,
+                        position.quantity
+                    );
+
+                    const stats = PerformanceTracker.getStats();
+                    console.log(`📈 Running Stats -> Trades: ${stats.totalTrades} | Total PnL: ${stats.totalPnL} USDT | WinRate: ${stats.winRate}`);
 
                     // Cancel any remaining TP/SL orders
                     await this.cancelTpSlOrders(position.symbol);
