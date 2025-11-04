@@ -227,48 +227,128 @@ class SimpleScalpingStrategy extends BaseStrategy {
     }
 
     calculateLevels(entryPrice, side, symbol = '') {
-        // 🎯 USE PAIR-SPECIFIC RISK FROM STRATEGY CONFIG
         const symbolConfig = this.getSymbolConfig(symbol);
-        const riskPercent = symbolConfig.risk.stopLossPercent;
-        const rewardPercent = symbolConfig.risk.takeProfitPercent;
 
-        console.log(`🎯 ${symbol} Risk: ${riskPercent}% SL, ${rewardPercent}% TP`);
+        // Fixed stop loss (don’t touch this)
+        const stopLossPercent = symbolConfig.risk.stopLossPercent;
+        let takeProfitPercent = symbolConfig.risk.takeProfitPercent;
 
-        if (side === 'BUY') {
-            return {
-                stopLoss: entryPrice * (1 - riskPercent / 100),
-                takeProfit: entryPrice * (1 + rewardPercent / 100)
-            };
-        } else {
-            return {
-                stopLoss: entryPrice * (1 + riskPercent / 100),
-                takeProfit: entryPrice * (1 - rewardPercent / 100)
-            };
+        // Get recent klines for adaptive TP
+        const klines = this.lastKlines?.[symbol];
+        let atrPercentage = 0, volumeRatio = 0;
+
+        if (klines && klines.length > 20) {
+            const closes = klines.map(k => k.close);
+            const highs = klines.map(k => k.high);
+            const lows = klines.map(k => k.low);
+            const vols = klines.map(k => k.volume);
+            const currentPrice = closes[closes.length - 1];
+
+            // --- Simplified ATR ---
+            const trueRanges = [];
+            for (let i = 1; i < highs.length; i++) {
+                const tr = Math.max(
+                    highs[i] - lows[i],
+                    Math.abs(highs[i] - closes[i - 1]),
+                    Math.abs(lows[i] - closes[i - 1])
+                );
+                trueRanges.push(tr);
+            }
+            const atr = trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
+            atrPercentage = (atr / currentPrice) * 100;
+
+            // --- Volume ratio ---
+            const avgVol = vols.slice(-30).reduce((a, b) => a + b, 0) / 30;
+            volumeRatio = vols[vols.length - 1] / avgVol;
         }
+
+        // --- Adaptive TP logic ---
+        const isHighVol = atrPercentage > 1.0 || volumeRatio > 2.5;
+        const isLowVol = atrPercentage < 0.4 && volumeRatio < 1.2;
+
+        if (isHighVol) {
+            takeProfitPercent *= 1.25;
+            console.log(`⚡ ${symbol}: High volatility → TP widened (${takeProfitPercent.toFixed(2)}%)`);
+        } else if (isLowVol) {
+            takeProfitPercent *= 0.9;
+            console.log(`🐢 ${symbol}: Low volatility → TP tightened (${takeProfitPercent.toFixed(2)}%)`);
+        } else {
+            console.log(`🎯 ${symbol}: Normal vol (ATR ${atrPercentage.toFixed(2)}%, Vol ${volumeRatio.toFixed(2)}x)`);
+        }
+
+        // --- Calculate price levels ---
+        let stopLoss, takeProfit;
+        if (side === 'BUY') {
+            stopLoss = entryPrice * (1 - stopLossPercent / 100);
+            takeProfit = entryPrice * (1 + takeProfitPercent / 100);
+        } else {
+            stopLoss = entryPrice * (1 + stopLossPercent / 100);
+            takeProfit = entryPrice * (1 - takeProfitPercent / 100);
+        }
+
+        return {
+            stopLoss,
+            takeProfit,
+            stopLossPercent,
+            takeProfitPercent
+        };
     }
+
 
     calculatePositionSize(accountBalance, price, symbol = '') {
         const riskPercent = this.config?.trading?.positionPercent / 100 || 0.02;
         const leverage = this.config?.trading?.leverage || 1;
 
-        // 🎯 USE PAIR-SPECIFIC RISK FROM STRATEGY CONFIG
+        // --- Get symbol config ---
         const symbolConfig = this.getSymbolFilters(symbol);
         const stopLossPercent = symbolConfig.risk.stopLossPercent;
 
-        const riskAmount = accountBalance * riskPercent;
-        const priceRisk = price * (stopLossPercent / 100);
+        // --- Check volatility to adapt position ---
+        const klines = this.lastKlines?.[symbol];
+        let atrPercentage = 0, volumeRatio = 0;
 
+        if (klines && klines.length > 20) {
+            const closes = klines.map(k => k.close);
+            const highs = klines.map(k => k.high);
+            const lows = klines.map(k => k.low);
+            const vols = klines.map(k => k.volume);
+            const currentPrice = closes[closes.length - 1];
+
+            const trueRanges = [];
+            for (let i = 1; i < highs.length; i++) {
+                const tr = Math.max(
+                    highs[i] - lows[i],
+                    Math.abs(highs[i] - closes[i - 1]),
+                    Math.abs(lows[i] - closes[i - 1])
+                );
+                trueRanges.push(tr);
+            }
+            const atr = trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
+            atrPercentage = (atr / currentPrice) * 100;
+
+            const avgVol = vols.slice(-30).reduce((a, b) => a + b, 0) / 30;
+            volumeRatio = vols[vols.length - 1] / avgVol;
+        }
+
+        // --- Adaptive position scaling ---
+        let sizeFactor = 1.0;
+        if (atrPercentage > 1.0 || volumeRatio > 2.5) sizeFactor = 0.8;   // reduce size
+        else if (atrPercentage < 0.4 && volumeRatio < 1.2) sizeFactor = 1.2; // increase size slightly
+
+        const riskAmount = accountBalance * riskPercent * sizeFactor;
+        const priceRisk = price * (stopLossPercent / 100);
         const unleveragedQuantity = riskAmount / priceRisk;
 
-        console.log(`💰 ${symbol} Position Sizing:`);
-        console.log(`   Account: $${accountBalance.toFixed(2)}`);
-        console.log(`   Risk: ${(riskPercent * 100).toFixed(1)}% = $${riskAmount.toFixed(2)}`);
-        console.log(`   Stop Loss: ${stopLossPercent}% (Pair Specific)`);
-        console.log(`   Leverage: ${leverage}x`);
-        console.log(`   Quantity: ${unleveragedQuantity.toFixed(6)} coins`);
+        console.log(`💰 ${symbol} Adaptive Position:`)
+        console.log(`   Account: $${accountBalance.toFixed(2)}`)
+        console.log(`   ATR: ${atrPercentage.toFixed(2)}%, VolRatio: ${volumeRatio.toFixed(2)}x`)
+        console.log(`   Size Factor: ${sizeFactor.toFixed(2)}x`)
+        console.log(`   Final Risk: $${riskAmount.toFixed(2)} @ ${stopLossPercent}% stop`)
+        console.log(`   Quantity: ${unleveragedQuantity.toFixed(6)} coins`)
 
         return unleveragedQuantity;
     }
+
 }
 
 module.exports = SimpleScalpingStrategy;
