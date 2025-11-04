@@ -1,16 +1,15 @@
+// strategies/simpleScalping.js
 const BaseStrategy = require('./baseStrategy');
 const Indicators = require('../indicators');
 
 class SimpleScalpingStrategy extends BaseStrategy {
     constructor(config) {
         super(config);
+        this.config = config;
         this.name = 'simple_scalping';
-        this.positions = new Map();
-        this.isBacktest = true;
         this.tradeCount = 0;
-        this.lastSignal = null;
-        
-        console.log('🎯 FIXED SCALPING STRATEGY - QUALITY OVER QUANTITY');
+
+        console.log('🎯 FINAL WINNING STRATEGY - ALL CONFIGS INTERNAL');
     }
 
     analyze(data, symbol = '') {
@@ -27,13 +26,13 @@ class SimpleScalpingStrategy extends BaseStrategy {
             const highs = data.map(d => d.high);
             const lows = data.map(d => d.low);
             const volumes = data.map(d => d.volume);
-            
+
             // Key indicators
             const ema20 = Indicators.EMA(closes, 20);
             const ema50 = Indicators.EMA(closes, 50);
             const rsi = Indicators.RSI(closes, 14);
             const atr = Indicators.ATR(highs, lows, closes, 14);
-            
+
             if (!ema20 || !ema50 || !rsi || !atr) {
                 return { signal: 'HOLD', reason: 'Indicators not ready' };
             }
@@ -42,65 +41,45 @@ class SimpleScalpingStrategy extends BaseStrategy {
             const volumeAvg = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
             const volumeRatio = currentVolume / volumeAvg;
 
-            // 🎯 IMPROVED TREND DETECTION
+            // Trend detection
             const trendStrength = this.getTrendStrength(closes, ema20, ema50);
             const atrPercentage = (atr / currentPrice) * 100;
 
-            // 🚫 STRICT FILTERS TO REDUCE FALSE SIGNALS
-            if (volumeRatio < 1.2) {
+            // Symbol-specific filters
+            const symbolConfig = this.getSymbolConfig(symbol);
+
+            if (volumeRatio < symbolConfig.filters.minVolume) {
                 return { signal: 'HOLD', reason: 'Low volume' };
             }
 
-            if (atrPercentage < 0.3) {
+            if (atrPercentage < symbolConfig.filters.minATR) {
                 return { signal: 'HOLD', reason: 'Low volatility' };
             }
 
-            // 🎯 HIGH-QUALITY SETUPS ONLY
+            // Entry conditions
+            const entryConditions = this.getEntryConditions(symbolConfig, trendStrength, currentPrice, ema20, rsi, volumeRatio, currentLow, currentHigh, currentCandle);
 
-            // 🟢 STRONG BULLISH SETUP
-            const strongBuyCondition = 
-                trendStrength === 'strong_bullish' &&
-                currentPrice > ema20 && // Above EMA20
-                rsi > 45 && rsi < 65 && // Healthy RSI
-                volumeRatio > 1.3 && // Strong volume
-                currentPrice > currentLow * 1.005 && // Showing strength
-                this.isBullishCandle(currentCandle); // Bullish candle confirmation
-
-            // 🔴 STRONG BEARISH SETUP
-            const strongSellCondition =
-                trendStrength === 'strong_bearish' &&
-                currentPrice < ema20 && // Below EMA20
-                rsi < 55 && rsi > 35 && // Healthy RSI
-                volumeRatio > 1.3 && // Strong volume
-                currentPrice < currentHigh * 0.995 && // Showing weakness
-                this.isBearishCandle(currentCandle); // Bearish candle confirmation
-
-            // Only log quality setups
-            if (strongBuyCondition || strongSellCondition) {
-                console.log(`\n🎯 QUALITY SETUP: Trend=${trendStrength}, RSI=${rsi.toFixed(1)}, Vol=${volumeRatio.toFixed(2)}x`);
+            if (entryConditions.buyCondition || entryConditions.sellCondition) {
+                console.log(`\n🎯 ${symbol} SETUP: Trend=${trendStrength}, RSI=${rsi.toFixed(1)}, Vol=${volumeRatio.toFixed(2)}x`);
             }
 
-            if (strongBuyCondition) {
-                console.log(`✅ STRONG BUY: Bullish trend + volume confirmation`);
+            if (entryConditions.buyCondition) {
+                console.log(`✅ ${symbol} BUY: Bullish trend + volume confirmation`);
                 this.tradeCount++;
-                this.lastSignal = 'BUY';
-                if (!this.isBacktest) this.recordEntry(symbol);
-                return { 
-                    signal: 'BUY', 
-                    reason: `Strong bullish trend with volume`,
-                    price: currentPrice 
+                return {
+                    signal: 'BUY',
+                    reason: `Bullish trend with volume`,
+                    price: currentPrice
                 };
             }
 
-            if (strongSellCondition) {
-                console.log(`✅ STRONG SELL: Bearish trend + volume confirmation`);
+            if (entryConditions.sellCondition) {
+                console.log(`✅ ${symbol} SELL: Bearish trend + volume confirmation`);
                 this.tradeCount++;
-                this.lastSignal = 'SELL';
-                if (!this.isBacktest) this.recordEntry(symbol);
-                return { 
-                    signal: 'SELL', 
-                    reason: `Strong bearish trend with volume`,
-                    price: currentPrice 
+                return {
+                    signal: 'SELL',
+                    reason: `Bearish trend with volume`,
+                    price: currentPrice
                 };
             }
 
@@ -112,47 +91,275 @@ class SimpleScalpingStrategy extends BaseStrategy {
         }
     }
 
+    getSymbolConfig(symbol) {
+        // 🎯 ALL MAGIC NUMBERS IN ONE PLACE
+        const configs = {
+            // BTCUSDT - EXCELLENT (17.73% return, 53.8% win rate)
+            'BTCUSDT': {
+                filters: {
+                    minVolume: 1.2,
+                    minATR: 0.3
+                },
+                risk: { 
+                    stopLossPercent: 0.50, 
+                    takeProfitPercent: 1.00 
+                },
+                entryConditions: {
+                    buy: {
+                        minRSI: 48,
+                        maxRSI: 65,
+                        minVolume: 1.4,
+                        priceMovement: 1.005
+                    },
+                    sell: {
+                        minRSI: 35,
+                        maxRSI: 52,
+                        minVolume: 1.4,
+                        priceMovement: 0.995
+                    }
+                }
+            },
+            // BNBUSDT - EXCELLENT (39.41% return, 48.1% win rate)  
+            'BNBUSDT': {
+                filters: {
+                    minVolume: 1.2,
+                    minATR: 0.3
+                },
+                risk: { 
+                    stopLossPercent: 0.50, 
+                    takeProfitPercent: 1.00 
+                },
+                entryConditions: {
+                    buy: {
+                        minRSI: 48,
+                        maxRSI: 65,
+                        minVolume: 1.4,
+                        priceMovement: 1.005
+                    },
+                    sell: {
+                        minRSI: 35,
+                        maxRSI: 52,
+                        minVolume: 1.4,
+                        priceMovement: 0.995
+                    }
+                }
+            },
+            // ETHUSDT - EXCELLENT (51.57% return, 60% win rate)
+            'ETHUSDT': {
+                filters: {
+                    minVolume: 1.3,
+                    minATR: 0.4
+                },
+                risk: { 
+                    stopLossPercent: 0.50, 
+                    takeProfitPercent: 1.00 
+                },
+                entryConditions: {
+                    buy: {
+                        minRSI: 50,
+                        maxRSI: 68,
+                        minVolume: 1.5,
+                        priceMovement: 1.008
+                    },
+                    sell: {
+                        minRSI: 30,
+                        maxRSI: 50,
+                        minVolume: 1.5,
+                        priceMovement: 0.992
+                    }
+                }
+            },
+            // XRPUSDT - GOOD (2.61% return, 47.4% win rate)
+            'XRPUSDT': {
+                filters: {
+                    minVolume: 1.3,
+                    minATR: 0.4
+                },
+                risk: { 
+                    stopLossPercent: 0.50, 
+                    takeProfitPercent: 1.00 
+                },
+                entryConditions: {
+                    buy: {
+                        minRSI: 50,
+                        maxRSI: 68,
+                        minVolume: 1.5,
+                        priceMovement: 1.008
+                    },
+                    sell: {
+                        minRSI: 30,
+                        maxRSI: 50,
+                        minVolume: 1.5,
+                        priceMovement: 0.992
+                    }
+                }
+            },
+            // ADAUSDT - NEEDS FIX (-56% return)
+            'ADAUSDT': {
+                filters: {
+                    minVolume: 1.3,
+                    minATR: 0.4
+                },
+                risk: { 
+                    stopLossPercent: 0.50, 
+                    takeProfitPercent: 1.00 
+                },
+                entryConditions: {
+                    buy: {
+                        minRSI: 50,
+                        maxRSI: 68,
+                        minVolume: 1.5,
+                        priceMovement: 1.008
+                    },
+                    sell: {
+                        minRSI: 30,
+                        maxRSI: 50,
+                        minVolume: 1.5,
+                        priceMovement: 0.992
+                    }
+                }
+            },
+            // 🎯 ADD NEW SYMBOLS HERE
+            'SOLUSDT': {
+                filters: {
+                    minVolume: 1.4,
+                    minATR: 0.6
+                },
+                risk: { 
+                    stopLossPercent: 0.75, 
+                    takeProfitPercent: 1.50 
+                },
+                entryConditions: {
+                    buy: {
+                        minRSI: 45,
+                        maxRSI: 70,
+                        minVolume: 1.6,
+                        priceMovement: 1.010
+                    },
+                    sell: {
+                        minRSI: 25,
+                        maxRSI: 55,
+                        minVolume: 1.6,
+                        priceMovement: 0.990
+                    }
+                }
+            },
+            'DOGEUSDT': {
+                filters: {
+                    minVolume: 1.5,
+                    minATR: 0.7
+                },
+                risk: { 
+                    stopLossPercent: 0.80, 
+                    takeProfitPercent: 1.60 
+                },
+                entryConditions: {
+                    buy: {
+                        minRSI: 40,
+                        maxRSI: 72,
+                        minVolume: 1.7,
+                        priceMovement: 1.012
+                    },
+                    sell: {
+                        minRSI: 20,
+                        maxRSI: 58,
+                        minVolume: 1.7,
+                        priceMovement: 0.988
+                    }
+                }
+            }
+        };
+
+        return configs[symbol] || {
+            filters: {
+                minVolume: 1.2,
+                minATR: 0.3
+            },
+            risk: { 
+                stopLossPercent: 0.50, 
+                takeProfitPercent: 1.00 
+            },
+            entryConditions: {
+                buy: {
+                    minRSI: 50,
+                    maxRSI: 65,
+                    minVolume: 1.4,
+                    priceMovement: 1.006
+                },
+                sell: {
+                    minRSI: 35,
+                    maxRSI: 50,
+                    minVolume: 1.4,
+                    priceMovement: 0.994
+                }
+            }
+        };
+    }
+
+    // 🎯 ADD FOR BACKWARD COMPATIBILITY
+    getSymbolFilters(symbol) {
+        const config = this.getSymbolConfig(symbol);
+        return {
+            minVolume: config.filters.minVolume,
+            minATR: config.filters.minATR,
+            risk: config.risk
+        };
+    }
+
+    getEntryConditions(symbolConfig, trendStrength, currentPrice, ema20, rsi, volumeRatio, currentLow, currentHigh, currentCandle) {
+        const { buy: buyConditions, sell: sellConditions } = symbolConfig.entryConditions;
+
+        return {
+            buyCondition:
+                trendStrength === 'strong_bullish' &&
+                currentPrice > ema20 &&
+                rsi > buyConditions.minRSI && rsi < buyConditions.maxRSI &&
+                volumeRatio > buyConditions.minVolume &&
+                currentPrice > currentLow * buyConditions.priceMovement &&
+                this.isBullishCandle(currentCandle),
+
+            sellCondition:
+                trendStrength === 'strong_bearish' &&
+                currentPrice < ema20 &&
+                rsi > sellConditions.minRSI && rsi < sellConditions.maxRSI &&
+                volumeRatio > sellConditions.minVolume &&
+                currentPrice < currentHigh * sellConditions.priceMovement &&
+                this.isBearishCandle(currentCandle)
+        };
+    }
+
     getTrendStrength(closes, ema20, ema50) {
         const price = closes[closes.length - 1];
         const prevPrice = closes[closes.length - 2];
-        
-        // Strong bullish: Price above both EMAs + EMAs aligned up + price rising
+
         if (price > ema20 && ema20 > ema50 && price > prevPrice) {
             return 'strong_bullish';
         }
-        
-        // Strong bearish: Price below both EMAs + EMAs aligned down + price falling
+
         if (price < ema20 && ema20 < ema50 && price < prevPrice) {
             return 'strong_bearish';
         }
-        
-        // Weak bullish: Mixed but generally up
-        if (price > ema20 && ema20 > ema50 * 0.998) {
-            return 'weak_bullish';
-        }
-        
-        // Weak bearish: Mixed but generally down
-        if (price < ema20 && ema20 < ema50 * 1.002) {
-            return 'weak_bearish';
-        }
-        
+
         return 'ranging';
     }
 
     isBullishCandle(candle) {
-        return candle.close > candle.open && (candle.close - candle.open) > (candle.high - candle.low) * 0.3;
+        return candle.close > candle.open &&
+            (candle.close - candle.open) > (candle.high - candle.low) * 0.3;
     }
 
     isBearishCandle(candle) {
-        return candle.close < candle.open && (candle.open - candle.close) > (candle.high - candle.low) * 0.3;
+        return candle.close < candle.open &&
+            (candle.open - candle.close) > (candle.high - candle.low) * 0.3;
     }
 
-    calculateLevels(entryPrice, side) {
-        // 🎯 BETTER RISK/REWARD FOR 15M VOLATILITY
-        const riskPercent = 0.50;     // 0.50% stop loss (wider for 15m)
-        const rewardPercent = 1.00;   // 1.00% take profit (2:1 ratio)
-        
-        console.log(`🎯 Improved: ${riskPercent}% SL, ${rewardPercent}% TP`);
+    calculateLevels(entryPrice, side, symbol = '') {
+        // 🎯 USE PAIR-SPECIFIC RISK FROM STRATEGY CONFIG
+        const symbolConfig = this.getSymbolConfig(symbol);
+        const riskPercent = symbolConfig.risk.stopLossPercent;
+        const rewardPercent = symbolConfig.risk.takeProfitPercent;
+
+        console.log(`🎯 ${symbol} Risk: ${riskPercent}% SL, ${rewardPercent}% TP`);
 
         if (side === 'BUY') {
             return {
@@ -167,36 +374,27 @@ class SimpleScalpingStrategy extends BaseStrategy {
         }
     }
 
-    calculatePositionSize(accountBalance, price) {
-        const riskPercent = 0.02; // 2% risk per trade
-        const stopLossPercent = 0.50; // 0.50% stop loss
-        
+    calculatePositionSize(accountBalance, price, symbol = '') {
+        const riskPercent = this.config?.trading?.positionPercent / 100 || 0.02;
+        const leverage = this.config?.trading?.leverage || 1;
+
+        // 🎯 USE PAIR-SPECIFIC RISK FROM STRATEGY CONFIG
+        const symbolConfig = this.getSymbolFilters(symbol);
+        const stopLossPercent = symbolConfig.risk.stopLossPercent;
+
         const riskAmount = accountBalance * riskPercent;
         const priceRisk = price * (stopLossPercent / 100);
-        const quantity = riskAmount / priceRisk;
-        
-        console.log(`💰 Better Sizing: $${riskAmount.toFixed(2)} risk = ${quantity.toFixed(6)} coins`);
-        return quantity;
-    }
 
-    hasActivePosition(symbol) {
-        if (this.isBacktest) return false;
-        return this.positions.has(symbol);
-    }
+        const unleveragedQuantity = riskAmount / priceRisk;
 
-    recordEntry(symbol) {
-        this.positions.set(symbol, {
-            entryTime: Date.now(),
-            symbol: symbol
-        });
-    }
+        console.log(`💰 ${symbol} Position Sizing:`);
+        console.log(`   Account: $${accountBalance.toFixed(2)}`);
+        console.log(`   Risk: ${(riskPercent * 100).toFixed(1)}% = $${riskAmount.toFixed(2)}`);
+        console.log(`   Stop Loss: ${stopLossPercent}% (Pair Specific)`);
+        console.log(`   Leverage: ${leverage}x`);
+        console.log(`   Quantity: ${unleveragedQuantity.toFixed(6)} coins`);
 
-    recordExit(symbol) {
-        this.positions.delete(symbol);
-    }
-
-    setBacktestMode(isBacktest) {
-        this.isBacktest = isBacktest;
+        return unleveragedQuantity;
     }
 }
 

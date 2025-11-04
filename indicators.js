@@ -91,8 +91,6 @@ class Indicators {
         };
     }
 
-    // 🆕 ADD THESE HELPER INDICATORS FOR SCALPING
-
     // Average True Range - for volatility measurement
     static ATR(highs, lows, closes, period = 14) {
         if (highs.length < period + 1) return null;
@@ -124,6 +122,50 @@ class Indicators {
         }
         
         return sumPV / sumV;
+    }
+
+    // 🆕 MACD (Moving Average Convergence Divergence)
+    static MACD(data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
+        if (data.length < slowPeriod) return null;
+        
+        // Calculate fast and slow EMAs
+        const fastEMA = this.EMA(data, fastPeriod);
+        const slowEMA = this.EMA(data, slowPeriod);
+        
+        if (!fastEMA || !slowEMA) return null;
+        
+        // MACD Line = Fast EMA - Slow EMA
+        const macdLine = fastEMA - slowEMA;
+        
+        // Calculate signal line (EMA of MACD line)
+        // We need to build an array of MACD values
+        const macdValues = [];
+        
+        // Calculate MACD for each point where we have enough data
+        for (let i = slowPeriod - 1; i < data.length; i++) {
+            const slice = data.slice(0, i + 1);
+            const fast = this.EMA(slice, fastPeriod);
+            const slow = this.EMA(slice, slowPeriod);
+            if (fast && slow) {
+                macdValues.push(fast - slow);
+            }
+        }
+        
+        // Calculate signal line (EMA of MACD values)
+        const signalLine = macdValues.length >= signalPeriod 
+            ? this.EMA(macdValues, signalPeriod) 
+            : null;
+        
+        if (!signalLine) return null;
+        
+        // Histogram = MACD Line - Signal Line
+        const histogram = macdLine - signalLine;
+        
+        return {
+            MACD: macdLine,
+            signal: signalLine,
+            histogram: histogram
+        };
     }
 
     // 🆕 TREND STRENGTH INDICATOR

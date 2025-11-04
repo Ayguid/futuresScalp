@@ -1,22 +1,39 @@
 const BinanceCSVBacktester = require('./backtester');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config');
 
 async function main() {
     const backtester = new BinanceCSVBacktester();
     
-    // File is in the same 'data' folder within backtesting
-    const csvFilePath = path.join(__dirname, 'data/BTCUSDT-15m-2025-10.csv');
+    // 🆕 GET SYMBOLS FROM CONFIG
+    const symbols = config.trading.symbols || ['BTCUSDT'];
     
-    // Check if file exists first
-    if (!fs.existsSync(csvFilePath)) {
-        console.log('❌ CSV file not found:', csvFilePath);
-        console.log('\n📥 Please download the data first:');
-        //console.log('https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-5m-2025-10.zip');
-        console.log('\n💡 Extract the CSV file to:', path.resolve(csvFilePath));
-        console.log('\n📁 Current working directory:', __dirname);
+    // 🆕 AUTO-GENERATE FILE PATHS BASED ON CONFIG SYMBOLS
+    const symbolFileMap = {};
+    const availablePairs = [];
+
+    console.log('🔍 Looking for data files...');
+    console.log(`📊 Symbols from config: ${symbols.join(', ')}`);
+    
+    for (const symbol of symbols) {
+        const timeframe = config.strategy.timeframe;
+        const csvFilePath = path.join(__dirname, 'data', `${symbol}-${timeframe}-2025-10.csv`);
         
-        // Show what files are available
+        if (fs.existsSync(csvFilePath)) {
+            symbolFileMap[symbol] = csvFilePath;
+            availablePairs.push(symbol);
+            console.log(`✅ Found data for: ${symbol}`);
+        } else {
+            console.log(`❌ Missing data for: ${symbol} (looking for: ${path.basename(csvFilePath)})`);
+        }
+    }
+
+    if (availablePairs.length === 0) {
+        console.log('\n❌ No data files found!');
+        console.log('📥 Please download data files to the data/ folder');
+        console.log(`💡 Format: SYMBOL-${config.strategy.timeframe}-2025-10.csv`);
+        
         const dataDir = path.join(__dirname, 'data');
         if (fs.existsSync(dataDir)) {
             const files = fs.readdirSync(dataDir);
@@ -26,24 +43,18 @@ async function main() {
         return;
     }
 
-    // Check file size
-    const stats = fs.statSync(csvFilePath);
-    const fileSizeMB = stats.size / (1024 * 1024);
-    console.log(`📁 File size: ${fileSizeMB.toFixed(2)} MB`);
-
-    if (fileSizeMB < 0.1) {
-        console.log('⚠️  File seems very small - might be empty or incomplete');
-    }
-
-    console.log('🧪 Starting Backtest: Advanced Scalping Strategy');
-    console.log('📅 Period: October 2025');
-    console.log('⏰ Timeframe: 1m (resampled to strategy timeframe)');
+    console.log(`\n🧪 Testing ${availablePairs.length} pairs: ${availablePairs.join(', ')}`);
+    console.log('==================================================');
+    console.log(`💰 Initial Balance: $${backtester.initialBalance}`);
+    console.log(`🎯 Max Open Positions: ${config.trading.maxOpenPositions}`);
+    console.log(`⏰ Timeframe: ${config.strategy.timeframe}`);
+    console.log(`⚡ Leverage: ${config.trading.leverage}x`);
     console.log('==================================================\n');
 
     try {
-        await backtester.runBacktest('BTCUSDT', csvFilePath);
-        
-        console.log('\n🎉 Backtest completed successfully!');
+        // 🆕 USE MULTI-PAIR BACKTEST
+        await backtester.runMultiBacktest(symbolFileMap);
+        console.log('\n🎉 Multi-pair backtest completed!');
         console.log('💡 Check the backtesting/results/ folder for detailed reports');
         
     } catch (error) {
@@ -51,7 +62,7 @@ async function main() {
         
         if (error.message.includes('ENOENT') || error.message.includes('file')) {
             console.log('\n💡 Solution: Download the data from:');
-            console.log('https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/5m/');
+            console.log('https://data.binance.vision/data/futures/um/monthly/klines/');
         }
     }
 }

@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const config = {
     environment: process.env.BOT_ENVIRONMENT || 'testnet',
-    
+
     binance: {
         testnet: {
             apiKey: process.env.BINANCE_TESTNET_API_KEY,
@@ -18,29 +18,22 @@ const config = {
         }
     },
 
-risk: {
-    stopLossPercent: 0.50,     // 0.50% stop loss (wider for 15m)
-    takeProfitPercent: 1.00,   // 1.00% take profit (2:1 ratio)
-    maxDailyLoss: 100,         // Higher for testing
-},
+    trading: {
+        symbols: ['BTCUSDT', 'BNBUSDT', 'ETHUSDT', 'XRPUSDT'], // ,'ADAUSDT' -26.23%
+        leverage: 4,
+        positionPercent: 0.5,      // 2% risk per trade
+        minPositionValue: 10,
+        maxPositionSize: 500,
+        maxOpenPositions: 3,
+        marginMode: 'ISOLATED'
+    },
 
-trading: {
-    symbols: ['BTCUSDT'],
-    leverage: 3,
-    positionPercent: 2.0,      // 2% risk per trade
-    minPositionValue: 20,
-    maxPositionSize: 500,
-    maxOpenPositions: 1,
-    marginMode: 'ISOLATED'
-},
-
-strategy: {
-    name: 'simple_scalping',
-    timeframe: '15m',
-    minTimeBetweenTrades: 60 * 60 * 1000,  // 1 hour between trades for quality
-    maxHoldTime: 8 * 60 * 60 * 1000        // Max 8 hours hold time
-}
-
+    strategy: {
+        name: 'simple_scalping',
+        timeframe: '15m',
+        minTimeBetweenTrades: 60 * 60 * 1000,  // 1 hour between trades
+        maxHoldTime: 8 * 60 * 60 * 1000        // Max 8 hours hold time
+    }
 };
 
 config.getCurrentConfig = function () {

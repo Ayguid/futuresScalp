@@ -131,7 +131,7 @@ class ScalpingBot {
             console.log(`\n🔍 Analyzing ${symbol}...`);
 
             // Get recent market data
-            const klines = await this.client.getKlines(symbol, config.strategy.timeframe, 100);
+            const klines = await this.client.getKlines(symbol, config.strategy.timeframe, 300);
             console.log(`   📈 Got ${klines.length} klines`);
 
             if (klines.length === 0) {
@@ -155,81 +155,81 @@ class ScalpingBot {
         }
     }
 
-    async executeTrade(symbol, signal) {
-        try {
-            const account = await this.client.getAccountInfo();
-            const availableBalance = parseFloat(account.availableBalance);
-            const currentPrice = signal.price;
+async executeTrade(symbol, signal) {
+    try {
+        const account = await this.client.getAccountInfo();
+        const availableBalance = parseFloat(account.availableBalance);
+        const currentPrice = signal.price;
 
-            const openPositions = await this.client.getOpenPositions();
-            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
+        const openPositions = await this.client.getOpenPositions();
+        const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
 
-            if (activePositions.length >= config.trading.maxOpenPositions) {
-                console.log(`🛑 SAFETY: Max positions reached, cancelling ${symbol} trade`);
-                return;
-            }
-
-            // 🆕 ADD THIS CHECK - Prevent duplicate TP/SL orders
-            const hasExistingOrders = await this.checkExistingOrders(symbol);
-            if (hasExistingOrders) {
-                console.log(`🔄 ${symbol} Cleaning up existing orders before new trade`);
-                await this.cancelTpSlOrders(symbol);
-            }
-
-            // Calculate position size
-            const quantity = this.strategy.calculatePositionSize(
-                availableBalance,
-                currentPrice,
-                config.risk.stopLossPercent
-            );
-
-            // Adjust quantity to step size
-            const symbolInfo = await this.client.getSymbolInfo(symbol);
-            const adjustedQuantity = this.client.adjustQuantityToStepSize(
-                quantity,
-                parseFloat(symbolInfo.filters.LOT_SIZE.stepSize)
-            );
-
-            // Ensure minimum notional
-            const notional = adjustedQuantity * currentPrice;
-            const minNotional = parseFloat(symbolInfo.filters.MIN_NOTIONAL.notional);
-            if (notional < minNotional) {
-                console.log(`⏸️ ${symbol}: Notional ${notional.toFixed(2)} below minimum ${minNotional}, skipping`);
-                return;
-            }
-
-            console.log(`🎯 ${symbol} Executing ${signal.signal}: ${adjustedQuantity} at ${currentPrice}`);
-
-            // Calculate TP/SL LEVELS
-            const levels = this.strategy.calculateLevels(
-                currentPrice,
-                signal.signal
-            );
-
-            console.log(`🛡️ ${symbol} Risk Levels - Stop Loss: ${levels.stopLoss.toFixed(2)}, Take Profit: ${levels.takeProfit.toFixed(2)}`);
-
-            // Place market order
-            const order = await this.client.placeMarketOrder(symbol, signal.signal, adjustedQuantity);
-            console.log(`✅ ${symbol} Order placed: ${order.orderId}`);
-
-            // PLACE STOP LOSS AND TAKE PROFIT ORDERS
-            await this.placeStopLossAndTakeProfit(symbol, signal.signal, adjustedQuantity, levels);
-
-            // Store position information
-            this.positions.set(order.orderId, {
-                symbol: symbol,
-                side: signal.signal,
-                quantity: adjustedQuantity,
-                entryPrice: currentPrice,
-                timestamp: Date.now(),
-                stopLoss: levels.stopLoss,
-                takeProfit: levels.takeProfit
-            });
-
-        } catch (error) {
-            console.error(`❌ Trade execution error for ${symbol}:`, error.message);
+        if (activePositions.length >= config.trading.maxOpenPositions) {
+            console.log(`🛑 SAFETY: Max positions reached, cancelling ${symbol} trade`);
+            return;
         }
+
+        // ADD THIS CHECK - Prevent duplicate TP/SL orders
+        const hasExistingOrders = await this.checkExistingOrders(symbol);
+        if (hasExistingOrders) {
+            console.log(`🔄 ${symbol} Cleaning up existing orders before new trade`);
+            await this.cancelTpSlOrders(symbol);
+        }
+
+        const quantity = this.strategy.calculatePositionSize(
+            availableBalance,
+            currentPrice,
+            symbol  // Just pass symbol, strategy knows the risk config
+        );
+
+        // Adjust quantity to step size
+        const symbolInfo = await this.client.getSymbolInfo(symbol);
+        const adjustedQuantity = this.client.adjustQuantityToStepSize(
+            quantity,
+            parseFloat(symbolInfo.filters.LOT_SIZE.stepSize)
+        );
+
+        // Ensure minimum notional
+        const notional = adjustedQuantity * currentPrice;
+        const minNotional = parseFloat(symbolInfo.filters.MIN_NOTIONAL.notional);
+        if (notional < minNotional) {
+            console.log(`⏸️ ${symbol}: Notional ${notional.toFixed(2)} below minimum ${minNotional}, skipping`);
+            return;
+        }
+
+        console.log(`🎯 ${symbol} Executing ${signal.signal}: ${adjustedQuantity} at ${currentPrice}`);
+
+        // 🎯 FIX: Pass symbol to calculateLevels for pair-specific risk
+        const levels = this.strategy.calculateLevels(
+            currentPrice,
+            signal.signal,
+            symbol  // Pass symbol here
+        );
+
+        console.log(`🛡️ ${symbol} Risk Levels - Stop Loss: ${levels.stopLoss.toFixed(2)}, Take Profit: ${levels.takeProfit.toFixed(2)}`);
+
+        // Place market order
+        const order = await this.client.placeMarketOrder(symbol, signal.signal, adjustedQuantity);
+        console.log(`✅ ${symbol} Order placed: ${order.orderId}`);
+
+        // PLACE STOP LOSS AND TAKE PROFIT ORDERS
+        await this.placeStopLossAndTakeProfit(symbol, signal.signal, adjustedQuantity, levels);
+
+        // Store position information
+        this.positions.set(order.orderId, {
+            symbol: symbol,
+            side: signal.signal,
+            quantity: adjustedQuantity,
+            entryPrice: currentPrice,
+            timestamp: Date.now(),
+            stopLoss: levels.stopLoss,
+            takeProfit: levels.takeProfit
+        });
+
+    } catch (error) {
+        console.error(`❌ Trade execution error for ${symbol}:`, error);
     }
+}
 
     // 🆕 NEW METHOD - Place Stop Loss and Take Profit orders
 async placeStopLossAndTakeProfit(symbol, side, quantity, levels) {
@@ -407,31 +407,6 @@ async placeStopLossAndTakeProfit(symbol, side, quantity, levels) {
 
         } catch (error) {
             console.log(`ℹ️ No TP/SL orders to cancel for ${symbol}`);
-        }
-    }
-
-    async checkExitConditions(position) {
-        const symbol = position.symbol;
-        const positionAmt = parseFloat(position.positionAmt);
-        const entryPrice = parseFloat(position.entryPrice);
-        const currentPrice = await this.client.getPrice(symbol);
-        const unrealizedPnl = parseFloat(position.unRealizedProfit);
-
-        // Calculate PnL percentage
-        const pnlPercent = (unrealizedPnl / (entryPrice * Math.abs(positionAmt))) * 100;
-
-        // Take profit check
-        if (pnlPercent >= config.risk.takeProfitPercent) {
-            console.log(`🎯 ${symbol} Take profit hit: ${pnlPercent.toFixed(2)}%`);
-            await this.closePosition(symbol, positionAmt);
-            return;
-        }
-
-        // Stop loss check
-        if (pnlPercent <= -config.risk.stopLossPercent) {
-            console.log(`🛑 ${symbol} Stop loss hit: ${pnlPercent.toFixed(2)}%`);
-            await this.closePosition(symbol, positionAmt);
-            return;
         }
     }
 
