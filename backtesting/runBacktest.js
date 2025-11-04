@@ -1,7 +1,12 @@
-const BinanceCSVBacktester = require('./backtester');
-const fs = require('fs');
-const path = require('path');
-const config = require('../config');
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import BinanceCSVBacktester from './backtester.js';
+import fs from 'fs';
+import path from 'path';
+import config from '../config.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 async function main() {
     const backtester = new BinanceCSVBacktester();

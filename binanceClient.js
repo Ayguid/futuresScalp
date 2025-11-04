@@ -1,6 +1,6 @@
-const crypto = require('crypto-js');
-const axios = require('axios');
-const config = require('./config');
+import crypto from 'crypto-js';
+import axios from 'axios';
+import config from './config.js';
 
 class BinanceClient {
     constructor() {
@@ -279,4 +279,4 @@ async setMarginMode(symbol, marginType = 'ISOLATED') {
     }
 }
 
-module.exports = BinanceClient;
+export default BinanceClient;

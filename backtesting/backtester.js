@@ -1,8 +1,8 @@
-const fs = require('fs');
-const path = require('path');
-const csv = require('csv-parser');
-const SimpleScalpingStrategy = require('../strategies/simpleScalping');
-const config = require('../config');
+import fs from 'fs';
+import path from 'path';
+import csv from 'csv-parser';
+import SimpleScalpingStrategy from '../strategies/simpleScalping.js';
+import config from '../config.js';
 
 class BinanceCSVBacktester {
     constructor() {
@@ -649,4 +649,4 @@ class BinanceCSVBacktester {
     }
 }
 
-module.exports = BinanceCSVBacktester;
+export default BinanceCSVBacktester;

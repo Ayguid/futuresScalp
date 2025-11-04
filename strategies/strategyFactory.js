@@ -1,4 +1,4 @@
-const SimpleScalpingStrategy = require('./simpleScalping');
+import SimpleScalpingStrategy from './simpleScalping.js';
 
 class StrategyFactory {
     static createStrategy(strategyName, config) {
@@ -25,4 +25,4 @@ class StrategyFactory {
     }
 }
 
-module.exports = StrategyFactory;
+export default StrategyFactory;

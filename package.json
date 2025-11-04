@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Advanced scalping bot for Binance Futures",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "backtest": "node backtesting/runner.js",

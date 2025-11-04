@@ -41,4 +41,4 @@ class BaseStrategy {
     }
 }
 
-module.exports = BaseStrategy;
+export default BaseStrategy;

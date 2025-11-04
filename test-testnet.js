@@ -1,6 +1,6 @@
-require('dotenv').config();
-const crypto = require('crypto-js');
-const axios = require('axios');
+import 'dotenv/config';
+import crypto from 'crypto-js';
+import axios from 'axios';
 
 class BinanceFuturesTestnet {
     constructor(apiKey, secretKey) {

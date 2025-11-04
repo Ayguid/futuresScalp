@@ -1,6 +1,6 @@
 // strategies/simpleScalping.js
-const BaseStrategy = require('./baseStrategy');
-const Indicators = require('../indicators');
+import BaseStrategy from './baseStrategy.js';
+import Indicators from '../indicators.js';
 
 class SimpleScalpingStrategy extends BaseStrategy {
     constructor(config) {
@@ -351,4 +351,4 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
 }
 
-module.exports = SimpleScalpingStrategy;
+export default SimpleScalpingStrategy;

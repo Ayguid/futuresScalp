@@ -1,4 +1,4 @@
-require('dotenv').config();
+import 'dotenv/config';
 
 const config = {
     environment: process.env.BOT_ENVIRONMENT || 'testnet',
@@ -48,4 +48,4 @@ config.validate = function () {
     return true;
 };
 
-module.exports = config;
+export default config;

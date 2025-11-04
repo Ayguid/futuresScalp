@@ -1,8 +1,7 @@
-const BinanceClient = require('./binanceClient');
-const StrategyFactory = require('./strategies/strategyFactory');
-const PerformanceTracker = require('./utils/performanceTracker');
-
-const config = require('./config');
+import BinanceClient from './binanceClient.js';
+import StrategyFactory from './strategies/strategyFactory.js';
+import PerformanceTracker from './utils/performanceTracker.js';
+import config from './config.js';
 
 class ScalpingBot {
     constructor() {
@@ -461,4 +460,4 @@ async placeStopLossAndTakeProfit(symbol, side, quantity, levels) {
     }
 }
 
-module.exports = ScalpingBot;
+export default ScalpingBot;

@@ -1,23 +1,15 @@
-const ScalpingBot = require('./scalpingBot');
+import ScalpingBot from './scalpingBot.js';
 
-// Create and start the bot
 const bot = new ScalpingBot();
 
-// Handle graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('\n🛑 Received shutdown signal...');
-    bot.stop();
-    process.exit(0);
+// Graceful shutdown
+['SIGINT', 'SIGTERM'].forEach(signal => {
+    process.on(signal, async () => {
+        console.log(`\n🛑 Received ${signal}...`);
+        await bot.stop();
+        process.exit(0);
+    });
 });
 
-process.on('SIGTERM', async () => {
-    console.log('\n🛑 Received termination signal...');
-    bot.stop();
-    process.exit(0);
-});
-
-// Start the bot
+// Start bot
 bot.start().catch(console.error);
-
-// Export for testing
-module.exports = bot;
