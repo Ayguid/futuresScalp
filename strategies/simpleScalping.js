@@ -8,7 +8,6 @@ class SimpleScalpingStrategy extends BaseStrategy {
         this.config = config;
         this.name = 'simple_scalping';
         this.tradeCount = 0;
-
         console.log('🎯 FINAL WINNING STRATEGY - ALL CONFIGS INTERNAL');
     }
 
@@ -57,7 +56,17 @@ class SimpleScalpingStrategy extends BaseStrategy {
             }
 
             // Entry conditions
-            const entryConditions = this.getEntryConditions(symbolConfig, trendStrength, currentPrice, ema20, rsi, volumeRatio, currentLow, currentHigh, currentCandle);
+            const entryConditions = this.getEntryConditions(
+                symbolConfig,
+                trendStrength,
+                currentPrice,
+                ema20,
+                rsi,
+                volumeRatio,
+                currentLow,
+                currentHigh,
+                currentCandle
+            );
 
             if (entryConditions.buyCondition || entryConditions.sellCondition) {
                 console.log(`\n🎯 ${symbol} SETUP: Trend=${trendStrength}, RSI=${rsi.toFixed(1)}, Vol=${volumeRatio.toFixed(2)}x`);
@@ -84,7 +93,6 @@ class SimpleScalpingStrategy extends BaseStrategy {
             }
 
             return { signal: 'HOLD', reason: 'No quality setup', price: currentPrice };
-
         } catch (error) {
             console.error(`Strategy error:`, error.message);
             return { signal: 'HOLD', reason: 'Error', price: 0 };
@@ -92,206 +100,71 @@ class SimpleScalpingStrategy extends BaseStrategy {
     }
 
     getSymbolConfig(symbol) {
-        // 🎯 ALL MAGIC NUMBERS IN ONE PLACE
         const configs = {
-            // BTCUSDT - EXCELLENT (17.73% return, 53.8% win rate)
             'BTCUSDT': {
-                filters: {
-                    minVolume: 1.2,
-                    minATR: 0.3
-                },
-                risk: { 
-                    stopLossPercent: 0.50, 
-                    takeProfitPercent: 1.00 
-                },
+                filters: { minVolume: 1.2, minATR: 0.3 },
+                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
                 entryConditions: {
-                    buy: {
-                        minRSI: 48,
-                        maxRSI: 65,
-                        minVolume: 1.4,
-                        priceMovement: 1.005
-                    },
-                    sell: {
-                        minRSI: 35,
-                        maxRSI: 52,
-                        minVolume: 1.4,
-                        priceMovement: 0.995
-                    }
+                    buy: { minRSI: 48, maxRSI: 65, minVolume: 1.4, priceMovement: 1.005 },
+                    sell: { minRSI: 35, maxRSI: 52, minVolume: 1.4, priceMovement: 0.995 }
                 }
             },
-            // BNBUSDT - EXCELLENT (39.41% return, 48.1% win rate)  
             'BNBUSDT': {
-                filters: {
-                    minVolume: 1.2,
-                    minATR: 0.3
-                },
-                risk: { 
-                    stopLossPercent: 0.50, 
-                    takeProfitPercent: 1.00 
-                },
+                filters: { minVolume: 1.2, minATR: 0.3 },
+                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
                 entryConditions: {
-                    buy: {
-                        minRSI: 48,
-                        maxRSI: 65,
-                        minVolume: 1.4,
-                        priceMovement: 1.005
-                    },
-                    sell: {
-                        minRSI: 35,
-                        maxRSI: 52,
-                        minVolume: 1.4,
-                        priceMovement: 0.995
-                    }
+                    buy: { minRSI: 48, maxRSI: 65, minVolume: 1.4, priceMovement: 1.005 },
+                    sell: { minRSI: 35, maxRSI: 52, minVolume: 1.4, priceMovement: 0.995 }
                 }
             },
-            // ETHUSDT - EXCELLENT (51.57% return, 60% win rate)
             'ETHUSDT': {
-                filters: {
-                    minVolume: 1.3,
-                    minATR: 0.4
-                },
-                risk: { 
-                    stopLossPercent: 0.50, 
-                    takeProfitPercent: 1.00 
-                },
+                filters: { minVolume: 1.3, minATR: 0.4 },
+                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
                 entryConditions: {
-                    buy: {
-                        minRSI: 50,
-                        maxRSI: 68,
-                        minVolume: 1.5,
-                        priceMovement: 1.008
-                    },
-                    sell: {
-                        minRSI: 30,
-                        maxRSI: 50,
-                        minVolume: 1.5,
-                        priceMovement: 0.992
-                    }
+                    buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
+                    sell: { minRSI: 30, maxRSI: 50, minVolume: 1.5, priceMovement: 0.992 }
                 }
             },
-            // XRPUSDT - GOOD (2.61% return, 47.4% win rate)
             'XRPUSDT': {
-                filters: {
-                    minVolume: 1.3,
-                    minATR: 0.4
-                },
-                risk: { 
-                    stopLossPercent: 0.50, 
-                    takeProfitPercent: 1.00 
-                },
+                filters: { minVolume: 1.3, minATR: 0.4 },
+                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
                 entryConditions: {
-                    buy: {
-                        minRSI: 50,
-                        maxRSI: 68,
-                        minVolume: 1.5,
-                        priceMovement: 1.008
-                    },
-                    sell: {
-                        minRSI: 30,
-                        maxRSI: 50,
-                        minVolume: 1.5,
-                        priceMovement: 0.992
-                    }
+                    buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
+                    sell: { minRSI: 30, maxRSI: 50, minVolume: 1.5, priceMovement: 0.992 }
                 }
             },
-            // ADAUSDT - NEEDS FIX (-56% return)
             'ADAUSDT': {
-                filters: {
-                    minVolume: 1.3,
-                    minATR: 0.4
-                },
-                risk: { 
-                    stopLossPercent: 0.50, 
-                    takeProfitPercent: 1.00 
-                },
+                filters: { minVolume: 1.3, minATR: 0.4 },
+                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
                 entryConditions: {
-                    buy: {
-                        minRSI: 50,
-                        maxRSI: 68,
-                        minVolume: 1.5,
-                        priceMovement: 1.008
-                    },
-                    sell: {
-                        minRSI: 30,
-                        maxRSI: 50,
-                        minVolume: 1.5,
-                        priceMovement: 0.992
-                    }
+                    buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
+                    sell: { minRSI: 30, maxRSI: 50, minVolume: 1.5, priceMovement: 0.992 }
                 }
             },
-            // 🎯 ADD NEW SYMBOLS HERE
             'SOLUSDT': {
-                filters: {
-                    minVolume: 1.4,
-                    minATR: 0.6
-                },
-                risk: { 
-                    stopLossPercent: 0.75, 
-                    takeProfitPercent: 1.50 
-                },
+                filters: { minVolume: 1.4, minATR: 0.6 },
+                risk: { stopLossPercent: 0.75, takeProfitPercent: 1.50 },
                 entryConditions: {
-                    buy: {
-                        minRSI: 45,
-                        maxRSI: 70,
-                        minVolume: 1.6,
-                        priceMovement: 1.010
-                    },
-                    sell: {
-                        minRSI: 25,
-                        maxRSI: 55,
-                        minVolume: 1.6,
-                        priceMovement: 0.990
-                    }
+                    buy: { minRSI: 45, maxRSI: 70, minVolume: 1.6, priceMovement: 1.010 },
+                    sell: { minRSI: 25, maxRSI: 55, minVolume: 1.6, priceMovement: 0.990 }
                 }
             },
             'DOGEUSDT': {
-                filters: {
-                    minVolume: 1.5,
-                    minATR: 0.7
-                },
-                risk: { 
-                    stopLossPercent: 0.80, 
-                    takeProfitPercent: 1.60 
-                },
+                filters: { minVolume: 1.5, minATR: 0.7 },
+                risk: { stopLossPercent: 0.80, takeProfitPercent: 1.60 },
                 entryConditions: {
-                    buy: {
-                        minRSI: 40,
-                        maxRSI: 72,
-                        minVolume: 1.7,
-                        priceMovement: 1.012
-                    },
-                    sell: {
-                        minRSI: 20,
-                        maxRSI: 58,
-                        minVolume: 1.7,
-                        priceMovement: 0.988
-                    }
+                    buy: { minRSI: 40, maxRSI: 72, minVolume: 1.7, priceMovement: 1.012 },
+                    sell: { minRSI: 20, maxRSI: 58, minVolume: 1.7, priceMovement: 0.988 }
                 }
             }
         };
 
         return configs[symbol] || {
-            filters: {
-                minVolume: 1.2,
-                minATR: 0.3
-            },
-            risk: { 
-                stopLossPercent: 0.50, 
-                takeProfitPercent: 1.00 
-            },
+            filters: { minVolume: 1.2, minATR: 0.3 },
+            risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
             entryConditions: {
-                buy: {
-                    minRSI: 50,
-                    maxRSI: 65,
-                    minVolume: 1.4,
-                    priceMovement: 1.006
-                },
-                sell: {
-                    minRSI: 35,
-                    maxRSI: 50,
-                    minVolume: 1.4,
-                    priceMovement: 0.994
-                }
+                buy: { minRSI: 50, maxRSI: 65, minVolume: 1.4, priceMovement: 1.006 },
+                sell: { minRSI: 35, maxRSI: 50, minVolume: 1.4, priceMovement: 0.994 }
             }
         };
     }
