@@ -22,8 +22,6 @@ const config = {
         symbols: ['BTCUSDT', 'BNBUSDT', 'ETHUSDT', 'XRPUSDT'], // ,'ADAUSDT' -26.23%
         leverage: 4,
         positionPercent: 0.5,      //% risk per trade
-        minPositionValue: 10,
-        maxPositionSize: 500,
         maxOpenPositions: 3,
         marginMode: 'ISOLATED'
     },

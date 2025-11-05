@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "backtest": "node backtesting/runner.js",
+    "backtest": "node backtesting/runBacktest.js",
     "dev": "nodemon index.js"
   },
   "dependencies": {

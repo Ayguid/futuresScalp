@@ -182,34 +182,34 @@ class BinanceClient {
         return await this.makeRequest('GET', '/fapi/v1/openOrders', params);
     }
 
-async setLeverage(symbol, leverage) {
-    try {
-        console.log(`⚙️ Setting ${symbol} leverage to ${leverage}x...`);
-        
-        const params = {
-            symbol: symbol,
-            leverage: leverage
-        };
+    async setLeverage(symbol, leverage) {
+        try {
+            console.log(`⚙️ Setting ${symbol} leverage to ${leverage}x...`);
 
-        console.log(`📡 Making leverage API call for ${symbol}...`);
-        const result = await this.makeRequest('POST', '/fapi/v1/leverage', params);
-        
-        console.log(`✅ ${symbol} leverage set to: ${leverage}x`);
-        return result;
-    } catch (error) {
-        console.log(`🔍 Leverage error details for ${symbol}:`);
-        console.log(`   Error code: ${error.code}`);
-        console.log(`   Error message: ${error.msg || error.message}`);
-        
-        if (error.code === -4046 || error.msg?.includes('leverage not modified')) {
-            console.log(`ℹ️ ${symbol} leverage already set to: ${leverage}x`);
-            return { alreadySet: true };
-        } else {
-            console.error(`❌ Error setting leverage for ${symbol}:`, error.msg || error.message);
-            throw error;
+            const params = {
+                symbol: symbol,
+                leverage: leverage
+            };
+
+            console.log(`📡 Making leverage API call for ${symbol}...`);
+            const result = await this.makeRequest('POST', '/fapi/v1/leverage', params);
+
+            console.log(`✅ ${symbol} leverage set to: ${leverage}x`);
+            return result;
+        } catch (error) {
+            console.log(`🔍 Leverage error details for ${symbol}:`);
+            console.log(`   Error code: ${error.code}`);
+            console.log(`   Error message: ${error.msg || error.message}`);
+
+            if (error.code === -4046 || error.msg?.includes('leverage not modified')) {
+                console.log(`ℹ️ ${symbol} leverage already set to: ${leverage}x`);
+                return { alreadySet: true };
+            } else {
+                console.error(`❌ Error setting leverage for ${symbol}:`, error.msg || error.message);
+                throw error;
+            }
         }
     }
-}
 
     // Market data methods
     async getPrice(symbol) {
@@ -218,35 +218,35 @@ async setLeverage(symbol, leverage) {
     }
 
 
-async setMarginMode(symbol, marginType = 'ISOLATED') {
-    try {
-        console.log(`⚙️ Setting ${symbol} margin mode to ${marginType}...`);
-        
-        const params = {
-            symbol: symbol,
-            marginType: marginType.toUpperCase()
-        };
+    async setMarginMode(symbol, marginType = 'ISOLATED') {
+        try {
+            console.log(`⚙️ Setting ${symbol} margin mode to ${marginType}...`);
 
-        console.log(`📡 Making margin mode API call for ${symbol}...`);
-        const result = await this.makeRequest('POST', '/fapi/v1/marginType', params);
-        
-        console.log(`✅ ${symbol} margin mode set to: ${marginType}`);
-        return result;
-    } catch (error) {
-        console.log(`🔍 Margin mode error details for ${symbol}:`);
-        console.log(`   Error code: ${error.code}`);
-        console.log(`   Error message: ${error.msg || error.message}`);
-        
-        // If margin mode is already set, Binance returns error code -4046
-        if (error.code === -4046 || error.msg?.includes('No need to change margin type')) {
-            console.log(`ℹ️ ${symbol} margin mode already set to: ${marginType}`);
-            return { alreadySet: true };
-        } else {
-            console.error(`❌ Error setting margin mode for ${symbol}:`, error.msg || error.message);
-            throw error;
+            const params = {
+                symbol: symbol,
+                marginType: marginType.toUpperCase()
+            };
+
+            console.log(`📡 Making margin mode API call for ${symbol}...`);
+            const result = await this.makeRequest('POST', '/fapi/v1/marginType', params);
+
+            console.log(`✅ ${symbol} margin mode set to: ${marginType}`);
+            return result;
+        } catch (error) {
+            console.log(`🔍 Margin mode error details for ${symbol}:`);
+            console.log(`   Error code: ${error.code}`);
+            console.log(`   Error message: ${error.msg || error.message}`);
+
+            // If margin mode is already set, Binance returns error code -4046
+            if (error.code === -4046 || error.msg?.includes('No need to change margin type')) {
+                console.log(`ℹ️ ${symbol} margin mode already set to: ${marginType}`);
+                return { alreadySet: true };
+            } else {
+                console.error(`❌ Error setting margin mode for ${symbol}:`, error.msg || error.message);
+                throw error;
+            }
         }
     }
-}
 
     async getKlines(symbol, interval = '1m', limit = 100) {
         const response = await axios.get(`${this.baseURL}/fapi/v1/klines`, {
@@ -275,6 +275,25 @@ async setMarginMode(symbol, marginType = 'ISOLATED') {
             stopPrice: adjustedStopPrice.toString(),
             timeInForce: 'GTC'
         };
+        return await this.makeRequest('POST', '/fapi/v1/order', order);
+    }
+
+    // 🆕 ADD THIS METHOD - Take Profit Order (with specified price)
+    async placeTakeProfitOrder(symbol, side, quantity, price, stopPrice) {
+        const symbolInfo = await this.getSymbolInfo(symbol);
+        const adjustedPrice = this.adjustPriceToTickSize(price, parseFloat(symbolInfo.filters.PRICE_FILTER.tickSize));
+        const adjustedStopPrice = this.adjustPriceToTickSize(stopPrice, parseFloat(symbolInfo.filters.PRICE_FILTER.tickSize));
+
+        const order = {
+            symbol: symbol,
+            side: side.toUpperCase(),
+            type: 'TAKE_PROFIT',  // 🚨 CORRECT: Use TAKE_PROFIT
+            quantity: quantity.toString(),
+            price: adjustedPrice.toString(),      // Limit price
+            stopPrice: adjustedStopPrice.toString(), // Trigger price
+            timeInForce: 'GTC'
+        };
+        console.log(`🔍 Placing TAKE_PROFIT order:`, order);
         return await this.makeRequest('POST', '/fapi/v1/order', order);
     }
 }
