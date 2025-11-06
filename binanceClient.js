@@ -296,6 +296,69 @@ class BinanceClient {
         console.log(`🔍 Placing TAKE_PROFIT order:`, order);
         return await this.makeRequest('POST', '/fapi/v1/order', order);
     }
+
+    // Add this to your BinanceClient class
+    async placeTP_SL_BatchOrders(symbol, side, quantity, takeProfitPrice, stopLossPrice) {
+        const symbolInfo = await this.getSymbolInfo(symbol);
+
+        // Adjust prices to tick size (just like individual methods)
+        const adjustedTakeProfit = this.adjustPriceToTickSize(takeProfitPrice, parseFloat(symbolInfo.filters.PRICE_FILTER.tickSize));
+        const adjustedStopLoss = this.adjustPriceToTickSize(stopLossPrice, parseFloat(symbolInfo.filters.PRICE_FILTER.tickSize));
+
+        const orders = [];
+
+        // For LONG positions (BUY)
+        if (side === 'BUY') {
+            orders.push({
+                symbol: symbol,
+                side: 'SELL',
+                type: 'TAKE_PROFIT',
+                quantity: quantity.toString(),
+                price: adjustedTakeProfit.toString(),
+                stopPrice: adjustedTakeProfit.toString(),
+                timeInForce: 'GTC',
+                priceProtect: 'TRUE'
+            });
+
+            orders.push({
+                symbol: symbol,
+                side: 'SELL',
+                type: 'STOP_MARKET',
+                quantity: quantity.toString(),
+                stopPrice: adjustedStopLoss.toString(),
+                timeInForce: 'GTC',
+                priceProtect: 'TRUE'
+            });
+        }
+        // For SHORT positions (SELL)
+        else {
+            orders.push({
+                symbol: symbol,
+                side: 'BUY',
+                type: 'TAKE_PROFIT',
+                quantity: quantity.toString(),
+                price: adjustedTakeProfit.toString(),
+                stopPrice: adjustedTakeProfit.toString(),
+                timeInForce: 'GTC',
+                priceProtect: 'TRUE'
+            });
+
+            orders.push({
+                symbol: symbol,
+                side: 'BUY',
+                type: 'STOP_MARKET',
+                quantity: quantity.toString(),
+                stopPrice: adjustedStopLoss.toString(),
+                timeInForce: 'GTC',
+                priceProtect: 'TRUE'
+            });
+        }
+
+        const batchOrdersParam = JSON.stringify(orders);
+        return await this.makeRequest('POST', '/fapi/v1/batchOrders', {
+            batchOrders: batchOrdersParam
+        });
+    }
 }
 
 export default BinanceClient;
