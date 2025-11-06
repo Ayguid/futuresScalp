@@ -3,7 +3,7 @@ import { dirname } from 'path';
 import BinanceCSVBacktester from './backtester.js';
 import fs from 'fs';
 import path from 'path';
-import config from '../config.js';
+import config from '#config';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

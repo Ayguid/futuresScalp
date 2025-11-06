@@ -1,19 +1,33 @@
 {
   "name": "binance-scalping-bot",
   "version": "1.0.0",
-  "description": "Advanced scalping bot for Binance Futures",
+  "description": "Advanced scalping bot for Binance Futures with multi-indicator strategy",
   "main": "index.js",
   "type": "module",
+  "author": "Ayguid",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "scripts": {
     "start": "node index.js",
     "backtest": "node backtesting/runBacktest.js",
+    "test": "node backtesting/test-testnet.js",
     "dev": "nodemon index.js"
   },
+  "imports": {
+    "#bot/*": "./bot/*.js",
+    "#strategies/*": "./strategies/*.js",
+    "#utils/*": "./utils/*.js",
+    "#config": "./config.js"
+  },
   "dependencies": {
-    "axios": "^1.13.1",
-    "crypto-js": "^4.2.0",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
     "csv-parser": "^3.2.0",
     "csv-writer": "^1.6.0",
-    "dotenv": "^17.2.3"
+    "nodemon": "^3.1.10"
   }
 }

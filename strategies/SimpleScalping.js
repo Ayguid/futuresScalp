@@ -1,6 +1,5 @@
-// strategies/simpleScalping.js
-import BaseStrategy from './baseStrategy.js';
-import Indicators from '../indicators.js';
+import BaseStrategy from '#strategies/BaseStrategy';
+import Indicators from '#utils/indicators';
 
 class SimpleScalpingStrategy extends BaseStrategy {
     constructor(config) {

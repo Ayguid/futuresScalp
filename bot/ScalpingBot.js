@@ -1,3 +1,461 @@
+import BinanceClient from '#bot/BinanceClient';
+import StrategyFactory from '#strategies/StrategyFactory';
+import Logger from '#utils/Logger';
+import config from '#config';
+
+class ScalpingBot {
+    constructor() {
+        this.client = new BinanceClient();
+        this.strategy = StrategyFactory.createStrategy(config.strategy.name, config);
+        this.logger = new Logger();
+        
+        this.isRunning = false;
+        this.positions = new Map();
+        this.orders = new Map();
+        this.cooldowns = new Map();
+        
+        this.safetyConfig = config.getSafetyConfig();
+        
+        this.logger.info(`Bot Started - ${config.environment.toUpperCase()}`);
+        this.logger.info(`Strategy: ${this.strategy.name}`);
+        
+        process.on('SIGINT', () => this.stop());
+    }
+
+    // === COOLDOWN MANAGEMENT ===
+    setCooldown(symbol, seconds) {
+        this.cooldowns.set(symbol, Date.now() + (seconds * 1000));
+        this.logger.info(`${symbol} cooldown: ${seconds}s`);
+    }
+
+    isInCooldown(symbol) {
+        const cooldownEnd = this.cooldowns.get(symbol);
+        if (!cooldownEnd) return false;
+        
+        if (Date.now() < cooldownEnd) {
+            const remaining = Math.ceil((cooldownEnd - Date.now()) / 1000);
+            this.logger.debug(`${symbol} cooldown: ${remaining}s remaining`);
+            return true;
+        }
+        
+        this.cooldowns.delete(symbol);
+        return false;
+    }
+
+    // === INITIALIZATION ===
+    async initialize() {
+        try {
+            config.validate();
+            
+            const account = await this.client.getAccountInfo();
+            this.logger.info(`Connected - Balance: ${parseFloat(account.availableBalance).toFixed(2)} USDT`);
+            
+            await Promise.all(
+                config.trading.symbols.map(symbol => this.configureSymbol(symbol))
+            );
+            
+            return true;
+        } catch (error) {
+            this.logger.error(error.message, 'Initialization failed');
+            return false;
+        }
+    }
+
+    async configureSymbol(symbol) {
+        try {
+            await this.client.setMarginMode(symbol, config.trading.marginMode || 'ISOLATED');
+            await this.client.setLeverage(symbol, config.trading.leverage);
+            this.logger.info(`${symbol}: ${config.trading.leverage}x (${config.trading.marginMode})`);
+        } catch (error) {
+            this.logger.error(error.message, `Failed to configure ${symbol}`);
+        }
+    }
+
+    async recoverLiveState() {
+        try {
+            this.logger.info('Recovering live state...');
+            
+            const openPositions = await this.client.getOpenPositions();
+            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
+            
+            this.logger.info(`Found ${activePositions.length} live positions`);
+            
+            for (const position of activePositions) {
+                const positionAmt = parseFloat(position.positionAmt);
+                const side = positionAmt > 0 ? 'LONG' : 'SHORT';
+                
+                this.positions.set(`recovered_${position.symbol}_${Date.now()}`, {
+                    symbol: position.symbol,
+                    side,
+                    quantity: Math.abs(positionAmt),
+                    entryPrice: parseFloat(position.entryPrice),
+                    timestamp: Date.now(),
+                    stopLoss: parseFloat(position.stopLoss) || 0,
+                    takeProfit: 0
+                });
+                
+                this.logger.position(`Recovered ${position.symbol}: ${Math.abs(positionAmt)} (${side})`);
+                this.setCooldown(position.symbol, 30);
+            }
+            
+            this.logger.info('Recovery completed');
+        } catch (error) {
+            this.logger.error(error.message, 'Recovery failed');
+        }
+    }
+
+    // === BOT LIFECYCLE ===
+    async start() {
+        if (this.isRunning) {
+            this.logger.info('Bot already running');
+            return;
+        }
+
+        if (!await this.initialize()) {
+            this.logger.error('Failed to initialize');
+            return;
+        }
+
+        this.isRunning = true;
+        this.logger.info('Starting bot...');
+        
+        await this.recoverLiveState();
+        
+        this.tradingInterval = setInterval(() => this.tradingCycle(), 7000);
+        this.monitorInterval = setInterval(() => this.monitorPositions(), 3000);
+    }
+
+    stop() {
+        this.isRunning = false;
+        clearInterval(this.tradingInterval);
+        clearInterval(this.monitorInterval);
+        this.logger.info('Bot stopped');
+    }
+
+    // === STATE RECOVERY ===
+    async recoverLiveState() {
+        try {
+            this.logger.info('Recovering live state...');
+            
+            const openPositions = await this.client.getOpenPositions();
+            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
+            
+            this.logger.info(`Found ${activePositions.length} live positions`);
+            
+            for (const position of activePositions) {
+                const positionAmt = parseFloat(position.positionAmt);
+                const side = positionAmt > 0 ? 'LONG' : 'SHORT';
+                
+                this.positions.set(`recovered_${position.symbol}_${Date.now()}`, {
+                    symbol: position.symbol,
+                    side,
+                    quantity: Math.abs(positionAmt),
+                    entryPrice: parseFloat(position.entryPrice),
+                    timestamp: Date.now(),
+                    stopLoss: parseFloat(position.stopLoss) || 0,
+                    takeProfit: 0
+                });
+                
+                this.logger.position(`Recovered ${position.symbol}: ${Math.abs(positionAmt)} (${side})`);
+                this.setCooldown(position.symbol, 30);
+            }
+            
+            this.logger.info('Recovery completed');
+        } catch (error) {
+            this.logger.error(error.message, 'Recovery failed');
+        }
+    }
+
+    // === TRADING CYCLE ===
+    async tradingCycle() {
+        if (!this.isRunning) return;
+
+        try {
+            this.logger.debug(`Trading Cycle - ${new Date().toLocaleTimeString()}`);
+
+            const openPositions = await this.client.getOpenPositions();
+            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
+
+            this.logger.debug(`Positions: ${activePositions.length}/${config.trading.maxOpenPositions}`);
+
+            // Periodic orphan cleanup
+            if (Math.random() < this.safetyConfig.orphanCheckFrequency) {
+                await this.cleanupOrphanedOrders();
+            }
+
+            // Check if we can open new positions
+            if (activePositions.length >= config.trading.maxOpenPositions) {
+                this.logger.debug('Max positions reached');
+                return;
+            }
+
+            // Analyze each symbol sequentially to avoid rate limits
+            for (const symbol of config.trading.symbols) {
+                await this.analyzeSymbol(symbol);
+            }
+        } catch (error) {
+            this.logger.error(error.message, 'Trading cycle error');
+        }
+    }
+
+    async analyzeSymbol(symbol) {
+        try {
+            if (this.isInCooldown(symbol)) return;
+
+            // Check for existing position
+            const openPositions = await this.client.getOpenPositions();
+            const hasPosition = openPositions.some(p =>
+                p.symbol === symbol && Math.abs(parseFloat(p.positionAmt)) > 0
+            );
+
+            if (hasPosition) {
+                this.logger.debug(`${symbol} - Position already open`);
+                return;
+            }
+
+            this.logger.debug(`Analyzing ${symbol}...`);
+
+            const klines = await this.client.getKlines(symbol, config.strategy.timeframe, 300);
+            if (!klines.length) {
+                this.logger.debug(`No data for ${symbol}`);
+                return;
+            }
+
+            const signal = this.strategy.analyze(klines, symbol);
+            this.logger.debug(`${symbol} - ${signal.signal}: ${signal.reason}`);
+
+            if (signal.signal !== 'HOLD') {
+                this.logger.trade(`${symbol} Signal: ${signal.signal} - ${signal.reason}`);
+                await this.executeTrade(symbol, signal);
+            }
+        } catch (error) {
+            this.logger.error(error.message, `Error analyzing ${symbol}`);
+        }
+    }
+
+    // === TRADE EXECUTION ===
+    async executeTrade(symbol, signal) {
+        try {
+            if (this.isInCooldown(symbol)) return;
+
+            const account = await this.client.getAccountInfo();
+            const availableBalance = parseFloat(account.availableBalance);
+            
+            // Check max positions
+            const openPositions = await this.client.getOpenPositions();
+            const activeCount = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0).length;
+            
+            if (activeCount >= config.trading.maxOpenPositions) {
+                this.logger.trade(`Max positions reached, skipping ${symbol}`);
+                return;
+            }
+
+            // Calculate position size
+            const quantity = this.strategy.calculatePositionSize(
+                availableBalance,
+                signal.price,
+                symbol
+            );
+
+            const symbolInfo = await this.client.getSymbolInfo(symbol);
+            const adjustedQty = this.client.adjustQuantityToStepSize(
+                quantity,
+                parseFloat(symbolInfo.filters.LOT_SIZE.stepSize)
+            );
+
+            // Validate notional value
+            const notional = adjustedQty * signal.price;
+            const minNotional = parseFloat(symbolInfo.filters.MIN_NOTIONAL.notional);
+            if (notional < minNotional) {
+                this.logger.debug(`${symbol} notional too low`);
+                return;
+            }
+
+            this.logger.trade(`${symbol} ${signal.signal}: ${adjustedQty} @ ${signal.price}`);
+
+            const levels = this.strategy.calculateLevels(signal.price, signal.signal, symbol);
+
+            // Place market order
+            const order = await this.client.placeMarketOrder(symbol, signal.signal, adjustedQty);
+            this.logger.trade(`${symbol} Order: ${order.orderId}`);
+
+            // Place TP/SL batch orders
+            await this.placeTPSL(symbol, signal.signal, adjustedQty, levels);
+
+            // Store position
+            this.positions.set(order.orderId, {
+                symbol,
+                side: signal.signal,
+                quantity: adjustedQty,
+                entryPrice: signal.price,
+                timestamp: Date.now(),
+                stopLoss: levels.stopLoss,
+                takeProfit: levels.takeProfit
+            });
+
+            this.logger.position(
+                `OPEN - ${symbol} | ${signal.signal} | ${adjustedQty} @ $${signal.price} | ` +
+                `SL: $${levels.stopLoss.toFixed(2)} | TP: $${levels.takeProfit.toFixed(2)}`
+            );
+
+            this.setCooldown(symbol, 5);
+        } catch (error) {
+            this.logger.error(error, `Trade execution error: ${symbol}`);
+        }
+    }
+
+    async placeTPSL(symbol, side, quantity, levels) {
+        try {
+            this.logger.trade(`${symbol} Placing TP/SL batch...`);
+            
+            const result = await this.client.placeTP_SL_BatchOrders(
+                symbol,
+                side,
+                quantity,
+                levels.takeProfit,
+                levels.stopLoss
+            );
+            
+            const tpSuccess = result[0]?.orderId && !result[0].code;
+            const slSuccess = result[1]?.orderId && !result[1].code;
+            
+            if (tpSuccess && slSuccess) {
+                this.logger.trade(`${symbol} TP/SL placed: TP=${result[0].orderId}, SL=${result[1].orderId}`);
+                this.orders.set(`${symbol}_TP`, result[0].orderId);
+                this.orders.set(`${symbol}_SL`, result[1].orderId);
+            } else {
+                this.logger.error(`🚨 ${symbol} BATCH FAILED - EMERGENCY CLOSE`);
+                if (result[0]?.code) this.logger.error(`TP failed: ${result[0].msg}`);
+                if (result[1]?.code) this.logger.error(`SL failed: ${result[1].msg}`);
+                
+                await this.emergencyClose(symbol, side, quantity);
+                throw new Error('Batch TP/SL failed - position closed');
+            }
+        } catch (error) {
+            this.logger.error(`🚨 Batch TP/SL error: ${error.message}`);
+            await this.emergencyClose(symbol, side, quantity);
+            throw error;
+        }
+    }
+
+    async emergencyClose(symbol, side, quantity) {
+        try {
+            this.logger.error(`🚨 EMERGENCY CLOSE: ${symbol}`);
+            const closeSide = side === 'BUY' ? 'SELL' : 'BUY';
+            await this.client.placeMarketOrder(symbol, closeSide, quantity);
+            this.logger.error(`🚨 ${symbol} position closed - TP/SL failed`);
+        } catch (error) {
+            this.logger.error(`🚨 EMERGENCY CLOSE FAILED: ${symbol} - ${error.message}`);
+        }
+    }
+
+    // === CLEANUP ===
+    async cleanupOrphanedOrders() {
+        try {
+            const openPositions = await this.client.getOpenPositions();
+            const allOpenOrders = await this.client.getOpenOrders();
+            
+            this.logger.debug(`Checking: ${openPositions.length} positions, ${allOpenOrders.length} orders`);
+            
+            const symbolsWithPositions = new Set(
+                openPositions
+                    .filter(p => Math.abs(parseFloat(p.positionAmt)) > 0)
+                    .map(p => p.symbol)
+            );
+            
+            const orphanedOrders = allOpenOrders.filter(order =>
+                ['TAKE_PROFIT', 'STOP_MARKET', 'STOP'].includes(order.type) &&
+                !symbolsWithPositions.has(order.symbol)
+            );
+            
+            if (orphanedOrders.length > 0) {
+                this.logger.error(`Found ${orphanedOrders.length} orphaned orders`);
+                
+                for (const order of orphanedOrders) {
+                    try {
+                        await this.client.cancelOrder(order.symbol, order.orderId);
+                        this.logger.debug(`Canceled ${order.symbol}: ${order.orderId}`);
+                        
+                        if (order.type === 'TAKE_PROFIT') {
+                            this.orders.delete(`${order.symbol}_TP`);
+                        } else if (['STOP_MARKET', 'STOP'].includes(order.type)) {
+                            this.orders.delete(`${order.symbol}_SL`);
+                        }
+                    } catch (error) {
+                        this.logger.debug(`Cancel failed ${order.orderId}: ${error.message}`);
+                    }
+                }
+            }
+        } catch (error) {
+            this.logger.error(error.message, 'Cleanup error');
+        }
+    }
+
+    // === MONITORING ===
+    async monitorPositions() {
+        if (!this.isRunning) return;
+
+        try {
+            const openPositions = await this.client.getOpenPositions();
+            this.logger.debug(`Monitoring: ${openPositions.length} positions`);
+            
+            await this.cleanupOrphanedOrders();
+            
+            // Clean up closed positions
+            for (const [positionId, position] of this.positions) {
+                const stillOpen = openPositions.some(p =>
+                    p.symbol === position.symbol &&
+                    Math.abs(parseFloat(p.positionAmt)) > 0
+                );
+
+                if (!stillOpen) {
+                    this.logger.position(
+                        `CLOSED - ${position.symbol} | ${position.side} | ` +
+                        `${position.quantity} @ $${position.entryPrice}`
+                    );
+                    
+                    this.orders.delete(`${position.symbol}_TP`);
+                    this.orders.delete(`${position.symbol}_SL`);
+                    this.positions.delete(positionId);
+                    this.setCooldown(position.symbol, 30);
+                }
+            }
+        } catch (error) {
+            this.logger.error(error.message, 'Monitoring error');
+        }
+    }
+
+    // === STATUS & LOGS ===
+    async getStatus() {
+        const account = await this.client.getAccountInfo();
+        const positions = await this.client.getOpenPositions();
+        const openOrders = await this.client.getOpenOrders();
+
+        return {
+            running: this.isRunning,
+            environment: config.environment,
+            account: {
+                balance: parseFloat(account.availableBalance),
+                totalBalance: parseFloat(account.totalWalletBalance),
+                unrealizedPnl: parseFloat(account.totalUnrealizedProfit)
+            },
+            positions: positions.length,
+            openOrders: openOrders.length
+        };
+    }
+
+    getLogs(type = 'errors') {
+        return this.logger.readLog(type);
+    }
+
+    clearLogs(type = 'errors') {
+        this.logger.clearLog(type);
+    }
+}
+
+export default ScalpingBot;
+
+/*
 //Version 9 - WITH BATCH ORDERS + SAFETY CONFIG + EMERGENCY FAILSAFE + ORPHANED ORDER CLEANUP + LOGGING
 import BinanceClient from './binanceClient.js';
 import StrategyFactory from './strategies/strategyFactory.js';
@@ -472,3 +930,4 @@ async placeStopLossAndTakeProfit(symbol, side, quantity, levels) {
 }
 
 export default ScalpingBot;
+*/

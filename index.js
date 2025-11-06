@@ -1,4 +1,4 @@
-import ScalpingBot from './scalpingBot.js';
+import ScalpingBot from '#bot/ScalpingBot';
 
 const bot = new ScalpingBot();
 

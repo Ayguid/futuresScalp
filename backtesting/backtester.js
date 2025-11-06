@@ -1,12 +1,12 @@
 import fs from 'fs';
-import path from 'path';
 import csv from 'csv-parser';
-import SimpleScalpingStrategy from '../strategies/simpleScalping.js';
-import config from '../config.js';
+import SimpleScalping from '#strategies/SimpleScalping';
+import config from '#config';
+import path from 'path';
 
 class BinanceCSVBacktester {
     constructor() {
-        this.strategy = new SimpleScalpingStrategy(config);
+        this.strategy = new SimpleScalping(config);
         this.trades = [];
         this.initialBalance = 5000;
         this.balance = this.initialBalance;
@@ -27,6 +27,157 @@ class BinanceCSVBacktester {
         this.currentCycle = 0;
         this.equityCurve = [this.initialBalance];
         this.peakEquity = this.initialBalance;
+        
+        // Create results folder in constructor
+        this.resultsDir = this.ensureResultsFolder();
+    }
+
+    // Method to create results folder
+    ensureResultsFolder() {
+        const resultsDir = path.join(process.cwd(), 'backtesting/results');
+        if (!fs.existsSync(resultsDir)) {
+            fs.mkdirSync(resultsDir, { recursive: true });
+            console.log(`✅ Created results folder: ${resultsDir}`);
+        }
+        return resultsDir;
+    }
+
+    // Method to save results to JSON file
+    saveResultsToFile() {
+        try {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `backtest-results-${timestamp}.json`;
+            const filepath = path.join(this.resultsDir, filename);
+            
+            const resultsData = {
+                timestamp: new Date().toISOString(),
+                summary: {
+                    initialBalance: this.initialBalance,
+                    finalBalance: this.balance,
+                    totalReturn: ((this.balance - this.initialBalance) / this.initialBalance) * 100,
+                    totalProfit: this.balance - this.initialBalance,
+                    totalTrades: this.results.totalTrades,
+                    winRate: this.results.winRate,
+                    maxDrawdown: this.results.maxDrawdown,
+                    profitFactor: this.results.profitFactor,
+                    sharpeRatio: this.results.sharpeRatio,
+                    largestWin: this.results.largestWin,
+                    largestLoss: this.results.largestLoss
+                },
+                symbolPerformance: Object.fromEntries(this.symbolResults),
+                trades: this.trades,
+                equityCurve: this.equityCurve,
+                configuration: {
+                    maxOpenPositions: config.trading.maxOpenPositions,
+                    leverage: config.trading.leverage,
+                    timeframe: config.strategy.timeframe,
+                    symbols: config.trading.symbols
+                }
+            };
+            
+            fs.writeFileSync(filepath, JSON.stringify(resultsData, null, 2));
+            console.log(`💾 Results saved to: ${filepath}`);
+            
+            // Also save a CSV version of trades
+            this.saveTradesToCSV(timestamp);
+            
+            return filepath;
+        } catch (error) {
+            console.error('❌ Error saving results:', error.message);
+        }
+    }
+
+    // Method to save trades as CSV
+    saveTradesToCSV(timestamp) {
+        try {
+            const csvFilename = `trades-${timestamp}.csv`;
+            const csvFilepath = path.join(this.resultsDir, csvFilename);
+            
+            const csvHeaders = [
+                'id', 'symbol', 'side', 'entryPrice', 'exitPrice', 
+                'quantity', 'pnl', 'pnlPercent', 'entryTime', 'exitTime', 
+                'duration', 'exitReason'
+            ].join(',');
+            
+            const csvRows = this.trades.map(trade => 
+                csvHeaders.split(',').map(header => 
+                    `"${trade[header] || ''}"`
+                ).join(',')
+            );
+            
+            const csvContent = [csvHeaders, ...csvRows].join('\n');
+            fs.writeFileSync(csvFilepath, csvContent);
+            console.log(`📊 Trades CSV saved to: ${csvFilepath}`);
+            
+        } catch (error) {
+            console.error('❌ Error saving trades CSV:', error.message);
+        }
+    }
+
+    // Method to save a summary report
+    saveSummaryReport() {
+        try {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `summary-report-${timestamp}.txt`;
+            const filepath = path.join(this.resultsDir, filename);
+            
+            let report = `BACKTEST SUMMARY REPORT\n`;
+            report += `Generated: ${new Date().toISOString()}\n`;
+            report += `${'='.repeat(50)}\n\n`;
+            
+            // Summary stats
+            report += `PERFORMANCE SUMMARY:\n`;
+            report += `${'-'.repeat(30)}\n`;
+            report += `Initial Balance: $${this.initialBalance.toFixed(2)}\n`;
+            report += `Final Balance: $${this.balance.toFixed(2)}\n`;
+            report += `Total Return: ${((this.balance - this.initialBalance) / this.initialBalance * 100).toFixed(2)}%\n`;
+            report += `Total Profit: $${(this.balance - this.initialBalance).toFixed(2)}\n`;
+            report += `Total Trades: ${this.results.totalTrades}\n`;
+            report += `Win Rate: ${this.results.winRate.toFixed(1)}%\n`;
+            report += `Max Drawdown: ${this.results.maxDrawdown.toFixed(2)}%\n`;
+            report += `Profit Factor: ${this.results.profitFactor.toFixed(2)}\n`;
+            report += `Sharpe Ratio: ${this.results.sharpeRatio.toFixed(3)}\n\n`;
+            
+            // Symbol performance
+            report += `SYMBOL PERFORMANCE:\n`;
+            report += `${'-'.repeat(30)}\n`;
+            for (const [symbol, result] of this.symbolResults.entries()) {
+                const returnPercent = (result.profit / this.initialBalance) * 100;
+                report += `${symbol}: ${returnPercent.toFixed(2)}% | $${result.profit.toFixed(2)} | ${result.trades} trades | ${result.winRate.toFixed(1)}% WR\n`;
+            }
+            
+            // Trade analysis
+            report += `\nTRADE ANALYSIS:\n`;
+            report += `${'-'.repeat(30)}\n`;
+            const winningTrades = this.trades.filter(t => t.pnl > 0);
+            const losingTrades = this.trades.filter(t => t.pnl <= 0);
+            const avgWin = winningTrades.length > 0 ? winningTrades.reduce((sum, t) => sum + t.pnl, 0) / winningTrades.length : 0;
+            const avgLoss = losingTrades.length > 0 ? losingTrades.reduce((sum, t) => sum + t.pnl, 0) / losingTrades.length : 0;
+            
+            report += `Average Winning Trade: $${avgWin.toFixed(2)}\n`;
+            report += `Average Losing Trade: $${avgLoss.toFixed(2)}\n`;
+            report += `Largest Win: $${this.results.largestWin.toFixed(2)}\n`;
+            report += `Largest Loss: $${this.results.largestLoss.toFixed(2)}\n`;
+            report += `Best Trade: $${Math.max(...this.trades.map(t => t.pnl)).toFixed(2)}\n`;
+            report += `Worst Trade: $${Math.min(...this.trades.map(t => t.pnl)).toFixed(2)}\n`;
+            
+            // Exit reasons
+            report += `\nEXIT REASONS:\n`;
+            report += `${'-'.repeat(30)}\n`;
+            const exitReasons = {};
+            this.trades.forEach(trade => {
+                exitReasons[trade.exitReason] = (exitReasons[trade.exitReason] || 0) + 1;
+            });
+            for (const [reason, count] of Object.entries(exitReasons)) {
+                report += `${reason}: ${count} trades (${((count / this.trades.length) * 100).toFixed(1)}%)\n`;
+            }
+            
+            fs.writeFileSync(filepath, report);
+            console.log(`📋 Summary report saved to: ${filepath}`);
+            
+        } catch (error) {
+            console.error('❌ Error saving summary report:', error.message);
+        }
     }
 
     async runMultiBacktest(symbolFileMap, options = {}) {
@@ -79,6 +230,13 @@ class BinanceCSVBacktester {
         
         // Print summary
         this.printMultiPairSummary(originalBalance);
+        
+        // SAVE RESULTS TO FILES
+        console.log('\n💾 Saving results to files...');
+        this.saveResultsToFile();
+        this.saveSummaryReport();
+        
+        console.log(`\n🎉 All results saved to: ${this.resultsDir}`);
     }
 
     createCommonTimeline(allData) {
@@ -204,7 +362,7 @@ class BinanceCSVBacktester {
 
     async analyzeSymbolInCycle(symbol, data, currentTime, cycleIndex) {
         try {
-            // 🎯 USE ALL AVAILABLE DATA UP TO CURRENT POINT (not just 100 candles)
+            // USE ALL AVAILABLE DATA UP TO CURRENT POINT (not just 100 candles)
             const currentData = data.slice(0, cycleIndex + 1);
             
             // Need at least 100 candles for indicators to be reliable

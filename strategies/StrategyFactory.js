@@ -1,4 +1,4 @@
-import SimpleScalpingStrategy from './simpleScalping.js';
+import SimpleScalping from '#strategies/SimpleScalping';
 
 class StrategyFactory {
     static createStrategy(strategyName, config) {
@@ -18,7 +18,7 @@ class StrategyFactory {
                     return new MomentumScalpingStrategy(config);
                     */
            case 'simple_scalping':
-               return new SimpleScalpingStrategy(config);
+               return new SimpleScalping(config);
             default:
                 throw new Error(`Unknown strategy: ${strategyName}`);
         }
