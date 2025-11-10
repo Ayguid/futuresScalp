@@ -10,6 +10,7 @@ class Logger {
         this.errorLog = path.join(this.logDir, 'errors.log');
         this.positionsLog = path.join(this.logDir, 'positions.log');
         this.tradesLog = path.join(this.logDir, 'trades.log');
+        this.signalsLog = path.join(this.logDir, 'signals.log'); // 🆕 ADD THIS
     }
 
     ensureLogDirectory() {
@@ -32,16 +33,32 @@ class Logger {
         }
     }
 
+    // 🆕 ADD THIS METHOD - for signal data (backtesting)
+    signal(symbol, signalData) {
+        const message = `${symbol} - ${signalData.signal}: ${signalData.reason} | DATA: ${JSON.stringify(signalData)}`;
+        console.log(`🎯 ${symbol} - ${signalData.signal}: ${signalData.reason}`);
+        this.writeToFile(this.signalsLog, message);
+    }
+
+    // 🆕 UPDATE this method to optionally accept signal data
+    position(message, signalData = null) {
+        const fullMessage = `📊 ${message}`;
+        console.log(fullMessage);
+        this.writeToFile(this.positionsLog, fullMessage);
+        
+        // 🎯 If signal data provided, log it for backtesting
+        if (signalData) {
+            const symbol = message.split(' - ')[1]?.split(' ')[0];
+            if (symbol) {
+                this.signal(symbol, signalData);
+            }
+        }
+    }
+
     error(message, context = '') {
         const fullMessage = context ? `❌ ${context}: ${message}` : `❌ ${message}`;
         console.error(fullMessage);
         this.writeToFile(this.errorLog, fullMessage);
-    }
-
-    position(message) {
-        const fullMessage = `📊 ${message}`;
-        console.log(fullMessage);
-        this.writeToFile(this.positionsLog, fullMessage);
     }
 
     trade(message) {
@@ -53,22 +70,21 @@ class Logger {
     info(message) {
         const fullMessage = `ℹ️ ${message}`;
         console.log(fullMessage);
-        // Optionally write info to a separate file if needed
     }
 
     debug(message) {
         const fullMessage = `🔍 ${message}`;
         console.log(fullMessage);
-        // Optionally write debug to a separate file
     }
 
-    // Method to read log files (useful for debugging)
+    // 🆕 UPDATE readLog to include signals
     readLog(fileType) {
         try {
             const fileMap = {
                 'errors': this.errorLog,
                 'positions': this.positionsLog,
-                'trades': this.tradesLog
+                'trades': this.tradesLog,
+                'signals': this.signalsLog // 🆕 ADD THIS
             };
             
             const filePath = fileMap[fileType];
@@ -81,13 +97,14 @@ class Logger {
         }
     }
 
-    // Method to clear log files
+    // 🆕 UPDATE clearLog to include signals
     clearLog(fileType) {
         try {
             const fileMap = {
                 'errors': this.errorLog,
                 'positions': this.positionsLog,
-                'trades': this.tradesLog
+                'trades': this.tradesLog,
+                'signals': this.signalsLog // 🆕 ADD THIS
             };
             
             const filePath = fileMap[fileType];

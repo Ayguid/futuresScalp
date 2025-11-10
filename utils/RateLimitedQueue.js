@@ -7,6 +7,7 @@ class RateLimitedQueue {
         this.lastRefill = Date.now();
         this.queue = [];
         this.running = 0;
+        this.waitingResolvers = []; // 🆕 Track waiting promises
     }
 
     refillTokens() {
@@ -18,13 +19,27 @@ class RateLimitedQueue {
     }
 
     async waitForToken() {
-        while (true) {
-            this.refillTokens();
-            if (this.tokens > 0) {
-                this.tokens--;
-                return;
-            }
-            await new Promise(resolve => setTimeout(resolve, 50));
+        this.refillTokens();
+        
+        if (this.tokens > 0) {
+            this.tokens--;
+            return;
+        }
+
+        // 🆕 More efficient waiting using Promise resolution
+        return new Promise((resolve) => {
+            this.waitingResolvers.push(resolve);
+        });
+    }
+
+    // 🆕 New method to notify waiting promises when tokens are available
+    notifyWaiters() {
+        this.refillTokens();
+        
+        while (this.waitingResolvers.length > 0 && this.tokens > 0) {
+            const resolver = this.waitingResolvers.shift();
+            this.tokens--;
+            resolver();
         }
     }
 
@@ -40,12 +55,22 @@ class RateLimitedQueue {
         if (!item) return;
 
         this.running++;
-        await this.waitForToken();
-        item(async () => {
+        
+        try {
+            await this.waitForToken();
+            item(async () => {
+                this.running--;
+                // 🆕 Notify waiters when a request completes
+                this.notifyWaiters();
+                this.dequeue();
+            });
+        } catch (error) {
             this.running--;
+            this.notifyWaiters();
             this.dequeue();
-        });
+        }
     }
+
 }
 
 export default RateLimitedQueue;

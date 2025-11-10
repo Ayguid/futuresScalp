@@ -13,13 +13,44 @@ class ScalpingBot {
         this.positions = new Map();
         this.orders = new Map();
         this.cooldowns = new Map();
-        
+        this.pendingOperations = new Map();
         this.safetyConfig = config.getSafetyConfig();
         
         this.logger.info(`Bot Started - ${config.environment.toUpperCase()}`);
         this.logger.info(`Strategy: ${this.strategy.name}`);
+        this.logger.info(config.environment === 'testnet' 
+            ? '🧪 TESTNET MODE: Aggressive monitoring' 
+            : '🚀 MAINNET MODE: Conservative monitoring'
+        );
         
         process.on('SIGINT', () => this.stop());
+    }
+
+    // === HELPERS ===
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    createPositionData(position, orderId = null) {
+        const positionAmt = parseFloat(position.positionAmt);
+        return {
+            symbol: position.symbol,
+            side: positionAmt > 0 ? 'LONG' : 'SHORT',
+            quantity: Math.abs(positionAmt),
+            entryPrice: parseFloat(position.entryPrice),
+            timestamp: Date.now(),
+            stopLoss: parseFloat(position.stopLoss) || 0,
+            takeProfit: 0
+        };
+    }
+
+    async hasOpenPosition(symbol) {
+        const positions = await this.client.getOpenPositions();
+        return positions.some(p => p.symbol === symbol && Math.abs(parseFloat(p.positionAmt)) > 0);
+    }
+
+    getEnvConfig(testnetValue, mainnetValue) {
+        return config.environment === 'testnet' ? testnetValue : mainnetValue;
     }
 
     // === COOLDOWN MANAGEMENT ===
@@ -30,16 +61,14 @@ class ScalpingBot {
 
     isInCooldown(symbol) {
         const cooldownEnd = this.cooldowns.get(symbol);
-        if (!cooldownEnd) return false;
-        
-        if (Date.now() < cooldownEnd) {
-            const remaining = Math.ceil((cooldownEnd - Date.now()) / 1000);
-            this.logger.debug(`${symbol} cooldown: ${remaining}s remaining`);
-            return true;
+        if (!cooldownEnd || Date.now() >= cooldownEnd) {
+            this.cooldowns.delete(symbol);
+            return false;
         }
         
-        this.cooldowns.delete(symbol);
-        return false;
+        const remaining = Math.ceil((cooldownEnd - Date.now()) / 1000);
+        this.logger.debug(`${symbol} cooldown: ${remaining}s remaining`);
+        return true;
     }
 
     // === INITIALIZATION ===
@@ -81,20 +110,10 @@ class ScalpingBot {
             this.logger.info(`Found ${activePositions.length} live positions`);
             
             for (const position of activePositions) {
-                const positionAmt = parseFloat(position.positionAmt);
-                const side = positionAmt > 0 ? 'LONG' : 'SHORT';
+                const positionData = this.createPositionData(position);
+                this.positions.set(`recovered_${position.symbol}_${Date.now()}`, positionData);
                 
-                this.positions.set(`recovered_${position.symbol}_${Date.now()}`, {
-                    symbol: position.symbol,
-                    side,
-                    quantity: Math.abs(positionAmt),
-                    entryPrice: parseFloat(position.entryPrice),
-                    timestamp: Date.now(),
-                    stopLoss: parseFloat(position.stopLoss) || 0,
-                    takeProfit: 0
-                });
-                
-                this.logger.position(`Recovered ${position.symbol}: ${Math.abs(positionAmt)} (${side})`);
+                this.logger.position(`Recovered ${position.symbol}: ${positionData.quantity} (${positionData.side})`);
                 this.setCooldown(position.symbol, 30);
             }
             
@@ -121,8 +140,8 @@ class ScalpingBot {
         
         await this.recoverLiveState();
         
-        this.tradingInterval = setInterval(() => this.tradingCycle(), 7000);
-        this.monitorInterval = setInterval(() => this.monitorPositions(), 3000);
+        this.tradingInterval = setInterval(() => this.tradingCycle(), 10000);
+        this.monitorInterval = setInterval(() => this.monitorPositions(), 5000);
     }
 
     stop() {
@@ -130,40 +149,6 @@ class ScalpingBot {
         clearInterval(this.tradingInterval);
         clearInterval(this.monitorInterval);
         this.logger.info('Bot stopped');
-    }
-
-    // === STATE RECOVERY ===
-    async recoverLiveState() {
-        try {
-            this.logger.info('Recovering live state...');
-            
-            const openPositions = await this.client.getOpenPositions();
-            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
-            
-            this.logger.info(`Found ${activePositions.length} live positions`);
-            
-            for (const position of activePositions) {
-                const positionAmt = parseFloat(position.positionAmt);
-                const side = positionAmt > 0 ? 'LONG' : 'SHORT';
-                
-                this.positions.set(`recovered_${position.symbol}_${Date.now()}`, {
-                    symbol: position.symbol,
-                    side,
-                    quantity: Math.abs(positionAmt),
-                    entryPrice: parseFloat(position.entryPrice),
-                    timestamp: Date.now(),
-                    stopLoss: parseFloat(position.stopLoss) || 0,
-                    takeProfit: 0
-                });
-                
-                this.logger.position(`Recovered ${position.symbol}: ${Math.abs(positionAmt)} (${side})`);
-                this.setCooldown(position.symbol, 30);
-            }
-            
-            this.logger.info('Recovery completed');
-        } catch (error) {
-            this.logger.error(error.message, 'Recovery failed');
-        }
     }
 
     // === TRADING CYCLE ===
@@ -174,22 +159,15 @@ class ScalpingBot {
             this.logger.debug(`Trading Cycle - ${new Date().toLocaleTimeString()}`);
 
             const openPositions = await this.client.getOpenPositions();
-            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
+            const activeCount = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0).length;
 
-            this.logger.debug(`Positions: ${activePositions.length}/${config.trading.maxOpenPositions}`);
+            this.logger.debug(`Positions: ${activeCount}/${config.trading.maxOpenPositions}`);
 
-            // Periodic orphan cleanup
-            if (Math.random() < this.safetyConfig.orphanCheckFrequency) {
-                await this.cleanupOrphanedOrders();
-            }
-
-            // Check if we can open new positions
-            if (activePositions.length >= config.trading.maxOpenPositions) {
+            if (activeCount >= config.trading.maxOpenPositions) {
                 this.logger.debug('Max positions reached');
                 return;
             }
 
-            // Analyze each symbol sequentially to avoid rate limits
             for (const symbol of config.trading.symbols) {
                 await this.analyzeSymbol(symbol);
             }
@@ -200,16 +178,7 @@ class ScalpingBot {
 
     async analyzeSymbol(symbol) {
         try {
-            if (this.isInCooldown(symbol)) return;
-
-            // Check for existing position
-            const openPositions = await this.client.getOpenPositions();
-            const hasPosition = openPositions.some(p =>
-                p.symbol === symbol && Math.abs(parseFloat(p.positionAmt)) > 0
-            );
-
-            if (hasPosition) {
-                this.logger.debug(`${symbol} - Position already open`);
+            if (this.isInCooldown(symbol) || await this.hasOpenPosition(symbol)) {
                 return;
             }
 
@@ -222,8 +191,13 @@ class ScalpingBot {
             }
 
             const signal = this.strategy.analyze(klines, symbol);
-            this.logger.debug(`${symbol} - ${signal.signal}: ${signal.reason}`);
+            if (!signal || typeof signal.signal !== 'string') {
+                this.logger.error('Strategy returned invalid signal', signal);
+                return;
+            }
 
+            this.logger.debug(`${symbol} - ${signal.signal}: ${signal.reason}`);
+            
             if (signal.signal !== 'HOLD') {
                 this.logger.trade(`${symbol} Signal: ${signal.signal} - ${signal.reason}`);
                 await this.executeTrade(symbol, signal);
@@ -235,55 +209,73 @@ class ScalpingBot {
 
     // === TRADE EXECUTION ===
     async executeTrade(symbol, signal) {
+        if (this.pendingOperations.has(symbol)) {
+            this.logger.debug(`⏳ ${symbol} - Operation in progress`);
+            return;
+        }
+
+        this.pendingOperations.set(symbol, true);
+
         try {
-            if (this.isInCooldown(symbol)) return;
+            await this.validateAndExecuteTrade(symbol, signal);
+        } catch (error) {
+            this.logger.error(error.message, `Trade execution error: ${symbol}`);
+        } finally {
+            this.pendingOperations.delete(symbol);
+        }
+    }
 
-            const account = await this.client.getAccountInfo();
-            const availableBalance = parseFloat(account.availableBalance);
-            
-            // Check max positions
-            const openPositions = await this.client.getOpenPositions();
-            const activeCount = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0).length;
-            
-            if (activeCount >= config.trading.maxOpenPositions) {
-                this.logger.trade(`Max positions reached, skipping ${symbol}`);
-                return;
-            }
+    async validateAndExecuteTrade(symbol, signal) {
+        if (this.isInCooldown(symbol)) return;
 
-            // Calculate position size
-            const quantity = this.strategy.calculatePositionSize(
-                availableBalance,
-                signal.price,
-                symbol
-            );
+        const account = await this.client.getAccountInfo();
+        const openPositions = await this.client.getOpenPositions();
+        const activeCount = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0).length;
+        
+        if (activeCount >= config.trading.maxOpenPositions) {
+            this.logger.trade(`Max positions reached, skipping ${symbol}`);
+            return;
+        }
 
-            const symbolInfo = await this.client.getSymbolInfo(symbol);
-            const adjustedQty = this.client.adjustQuantityToStepSize(
-                quantity,
-                parseFloat(symbolInfo.filters.LOT_SIZE.stepSize)
-            );
+        const quantity = this.strategy.calculatePositionSize(
+            parseFloat(account.availableBalance),
+            signal.price,
+            symbol
+        );
 
-            // Validate notional value
-            const notional = adjustedQty * signal.price;
-            const minNotional = parseFloat(symbolInfo.filters.MIN_NOTIONAL.notional);
-            if (notional < minNotional) {
-                this.logger.debug(`${symbol} notional too low`);
-                return;
-            }
+        const symbolInfo = await this.client.getSymbolInfo(symbol);
+        const adjustedQty = this.client.adjustQuantityToStepSize(
+            quantity,
+            parseFloat(symbolInfo.filters.LOT_SIZE.stepSize)
+        );
 
-            this.logger.trade(`${symbol} ${signal.signal}: ${adjustedQty} @ ${signal.price}`);
+        const notional = adjustedQty * signal.price;
+        if (notional < parseFloat(symbolInfo.filters.MIN_NOTIONAL.notional)) {
+            this.logger.debug(`${symbol} notional too low`);
+            return;
+        }
 
-            const levels = this.strategy.calculateLevels(signal.price, signal.signal, symbol);
+        await this.executeMarketOrder(symbol, signal, adjustedQty);
+    }
 
-            // Place market order
-            const order = await this.client.placeMarketOrder(symbol, signal.signal, adjustedQty);
-            this.logger.trade(`${symbol} Order: ${order.orderId}`);
+    async executeMarketOrder(symbol, signal, adjustedQty) {
+        this.logger.trade(`${symbol} ${signal.signal}: ${adjustedQty} @ $${signal.price}`);
 
-            // Place TP/SL batch orders
+        const levels = this.strategy.calculateLevels(signal.price, signal.signal, symbol);
+        let marketOrder = null;
+        let protectionSuccess = false;
+
+        try {
+            // Step 1: Open position
+            marketOrder = await this.client.placeMarketOrder(symbol, signal.signal, adjustedQty);
+            this.logger.trade(`${symbol} Order: ${marketOrder.orderId}`);
+
+            // Step 2: Add protection
             await this.placeTPSL(symbol, signal.signal, adjustedQty, levels);
+            protectionSuccess = true;
 
-            // Store position
-            this.positions.set(order.orderId, {
+            // Step 3: Store position
+            this.positions.set(marketOrder.orderId, {
                 symbol,
                 side: signal.signal,
                 quantity: adjustedQty,
@@ -294,68 +286,147 @@ class ScalpingBot {
             });
 
             this.logger.position(
-                `OPEN - ${symbol} | ${signal.signal} | ${adjustedQty} @ $${signal.price} | ` +
-                `SL: $${levels.stopLoss.toFixed(2)} | TP: $${levels.takeProfit.toFixed(2)}`
+                `OPEN - ${symbol} | ${signal.signal} | ${adjustedQty} @ $${signal.price.toFixed(4)} | ` +
+                `SL: $${levels.stopLoss.toFixed(4)} | TP: $${levels.takeProfit.toFixed(4)}`,
+                signal
             );
 
-            this.setCooldown(symbol, 5);
-        } catch (error) {
-            this.logger.error(error, `Trade execution error: ${symbol}`);
-        }
-    }
+            this.setCooldown(symbol, 10);
 
-    async placeTPSL(symbol, side, quantity, levels) {
-        try {
-            this.logger.trade(`${symbol} Placing TP/SL batch...`);
+        } catch (atomicError) {
+            this.logger.error(`🚨 TRADE OPERATION FAILED: ${symbol} - ${atomicError.message}`);
             
-            const result = await this.client.placeTP_SL_BatchOrders(
-                symbol,
-                side,
-                quantity,
-                levels.takeProfit,
-                levels.stopLoss
-            );
-            
-            const tpSuccess = result[0]?.orderId && !result[0].code;
-            const slSuccess = result[1]?.orderId && !result[1].code;
-            
-            if (tpSuccess && slSuccess) {
-                this.logger.trade(`${symbol} TP/SL placed: TP=${result[0].orderId}, SL=${result[1].orderId}`);
-                this.orders.set(`${symbol}_TP`, result[0].orderId);
-                this.orders.set(`${symbol}_SL`, result[1].orderId);
-            } else {
-                this.logger.error(`🚨 ${symbol} BATCH FAILED - EMERGENCY CLOSE`);
-                if (result[0]?.code) this.logger.error(`TP failed: ${result[0].msg}`);
-                if (result[1]?.code) this.logger.error(`SL failed: ${result[1].msg}`);
-                
-                await this.emergencyClose(symbol, side, quantity);
-                throw new Error('Batch TP/SL failed - position closed');
+            if (marketOrder && !protectionSuccess) {
+                this.logger.error(`🚨 Market order placed but protection failed - emergency closing`);
+                await this.emergencyClose(symbol, signal.signal, adjustedQty);
             }
-        } catch (error) {
-            this.logger.error(`🚨 Batch TP/SL error: ${error.message}`);
-            await this.emergencyClose(symbol, side, quantity);
-            throw error;
+            
+            throw atomicError;
         }
     }
 
+    // === TP/SL MANAGEMENT ===
+    async placeTPSL(symbol, side, quantity, levels) {
+        this.logger.trade(`${symbol} Placing TP/SL: TP=$${levels.takeProfit.toFixed(4)}, SL=$${levels.stopLoss.toFixed(4)}`);
+        
+        const result = await this.client.placeTP_SL_BatchOrders(
+            symbol,
+            side,
+            quantity,
+            levels.takeProfit,
+            levels.stopLoss
+        );
+        
+        this.logger.debug(`${symbol} Batch Result: ${JSON.stringify(result)}`);
+        
+        const tpSuccess = result[0]?.orderId && !result[0].code;
+        const slSuccess = result[1]?.orderId && !result[1].code;
+        
+        if (tpSuccess && slSuccess) {
+            const verified = await this.verifyOrdersExist(symbol, result[0].orderId, result[1].orderId);
+            
+            if (verified) {
+                this.storeTPSLOrders(symbol, result);
+            } else {
+                this.logger.warn(`⚠️ ${symbol} TP/SL verification issue - monitoring closely`);
+                this.storeTPSLOrders(symbol, result);
+            }
+        } else {
+            this.handlePartialTPSLFailure(symbol, result);
+        }
+    }
+
+    storeTPSLOrders(symbol, result) {
+        if (result[0]?.orderId) {
+            this.logger.trade(`TP placed: ${result[0].orderId}`);
+            this.orders.set(`${symbol}_TP`, result[0].orderId);
+        }
+        if (result[1]?.orderId) {
+            this.logger.trade(`SL placed: ${result[1].orderId}`);
+            this.orders.set(`${symbol}_SL`, result[1].orderId);
+        }
+    }
+
+    handlePartialTPSLFailure(symbol, result) {
+        this.logger.warn(`⚠️ ${symbol} Batch partial failure - monitoring`);
+        this.storeTPSLOrders(symbol, result);
+        
+        if (result[0]?.code) this.logger.error(`TP failed: ${result[0].msg || result[0].code}`);
+        if (result[1]?.code) this.logger.error(`SL failed: ${result[1].msg || result[1].code}`);
+        
+        if (!result[0]?.orderId && !result[1]?.orderId) {
+            this.logger.error(`🚨 ${symbol} BATCH COMPLETE FAILURE`);
+            throw new Error('Batch TP/SL failed');
+        }
+    }
+
+    async verifyOrdersExist(symbol, tpOrderId, slOrderId) {
+        try {
+            const delay = this.getEnvConfig(3000, 1500);
+            const maxRetries = this.getEnvConfig(3, 2);
+            
+            await this.sleep(delay);
+            
+            for (let i = 0; i < maxRetries; i++) {
+                const openOrders = await this.client.getOpenOrders(symbol);
+                const tpExists = openOrders.some(o => o.orderId == tpOrderId);
+                const slExists = openOrders.some(o => o.orderId == slOrderId);
+                
+                if (tpExists && slExists) {
+                    this.logger.debug(`✅ TP/SL Verified: ${symbol}`);
+                    return true;
+                }
+                
+                if (i < maxRetries - 1) {
+                    this.logger.debug(`🔄 Retry ${i + 1}/${maxRetries} for ${symbol}`);
+                    await this.sleep(1000);
+                }
+            }
+            
+            this.logger.warn(`⚠️ TP/SL Verification failed: ${symbol}`);
+            return false;
+            
+        } catch (error) {
+            this.logger.error(`Verification error for ${symbol}: ${error.message}`);
+            return false;
+        }
+    }
+
+    // === EMERGENCY OPERATIONS ===
     async emergencyClose(symbol, side, quantity) {
         try {
             this.logger.error(`🚨 EMERGENCY CLOSE: ${symbol}`);
             const closeSide = side === 'BUY' ? 'SELL' : 'BUY';
-            await this.client.placeMarketOrder(symbol, closeSide, quantity);
-            this.logger.error(`🚨 ${symbol} position closed - TP/SL failed`);
+            const result = await this.client.placeMarketOrder(symbol, closeSide, quantity);
+            this.logger.error(`🚨 ${symbol} closed. Order: ${result.orderId}`);
         } catch (error) {
             this.logger.error(`🚨 EMERGENCY CLOSE FAILED: ${symbol} - ${error.message}`);
         }
     }
 
-    // === CLEANUP ===
+    async cancelAllOrders(symbol) {
+        try {
+            const openOrders = await this.client.getOpenOrders(symbol);
+            for (const order of openOrders) {
+                try {
+                    await this.client.cancelOrder(symbol, order.orderId);
+                    this.logger.debug(`Canceled ${symbol}: ${order.orderId}`);
+                } catch (error) {
+                    this.logger.debug(`Cancel failed ${order.orderId}: ${error.message}`);
+                }
+            }
+        } catch (error) {
+            this.logger.error(`Cancel all orders failed for ${symbol}: ${error.message}`);
+        }
+    }
+
+    // === CLEANUP & MONITORING ===
     async cleanupOrphanedOrders() {
         try {
-            const openPositions = await this.client.getOpenPositions();
-            const allOpenOrders = await this.client.getOpenOrders();
-            
-            this.logger.debug(`Checking: ${openPositions.length} positions, ${allOpenOrders.length} orders`);
+            const [openPositions, allOpenOrders] = await Promise.all([
+                this.client.getOpenPositions(),
+                this.client.getOpenOrders()
+            ]);
             
             const symbolsWithPositions = new Set(
                 openPositions
@@ -363,35 +434,87 @@ class ScalpingBot {
                     .map(p => p.symbol)
             );
             
-            const orphanedOrders = allOpenOrders.filter(order =>
-                ['TAKE_PROFIT', 'STOP_MARKET', 'STOP'].includes(order.type) &&
-                !symbolsWithPositions.has(order.symbol)
-            );
+            await this.removeOrphanedOrders(allOpenOrders, symbolsWithPositions);
+            await this.handleUnprotectedPositions(openPositions, allOpenOrders);
             
-            if (orphanedOrders.length > 0) {
-                this.logger.error(`Found ${orphanedOrders.length} orphaned orders`);
-                
-                for (const order of orphanedOrders) {
-                    try {
-                        await this.client.cancelOrder(order.symbol, order.orderId);
-                        this.logger.debug(`Canceled ${order.symbol}: ${order.orderId}`);
-                        
-                        if (order.type === 'TAKE_PROFIT') {
-                            this.orders.delete(`${order.symbol}_TP`);
-                        } else if (['STOP_MARKET', 'STOP'].includes(order.type)) {
-                            this.orders.delete(`${order.symbol}_SL`);
-                        }
-                    } catch (error) {
-                        this.logger.debug(`Cancel failed ${order.orderId}: ${error.message}`);
-                    }
-                }
-            }
         } catch (error) {
             this.logger.error(error.message, 'Cleanup error');
         }
     }
 
-    // === MONITORING ===
+    async removeOrphanedOrders(allOpenOrders, symbolsWithPositions) {
+        const orphans = allOpenOrders.filter(order =>
+            ['TAKE_PROFIT', 'STOP_MARKET'].includes(order.type) &&
+            !symbolsWithPositions.has(order.symbol)
+        );
+
+        if (orphans.length === 0) return;
+
+        this.logger.info(`Found ${orphans.length} orphaned orders`);
+        
+        for (const order of orphans) {
+            try {
+                await this.client.cancelOrder(order.symbol, order.orderId);
+                this.logger.debug(`Canceled ${order.symbol}: ${order.orderId}`);
+                this.orders.delete(`${order.symbol}_TP`);
+                this.orders.delete(`${order.symbol}_SL`);
+            } catch (error) {
+                this.logger.debug(`Cancel failed ${order.orderId}: ${error.message}`);
+            }
+        }
+    }
+
+    async handleUnprotectedPositions(openPositions, allOpenOrders) {
+        const unprotected = openPositions.filter(position => {
+            const positionAmt = parseFloat(position.positionAmt);
+            if (Math.abs(positionAmt) === 0) return false;
+            
+            return !allOpenOrders.some(order => 
+                order.symbol === position.symbol && 
+                ['TAKE_PROFIT', 'STOP_MARKET'].includes(order.type)
+            );
+        });
+
+        if (unprotected.length === 0) return;
+
+        if (config.environment === 'testnet') {
+            this.logger.error(`🧪 Testnet: ${unprotected.length} unprotected positions - repairing`);
+            for (const position of unprotected) {
+                await this.emergencyRepairPosition(position);
+            }
+        } else {
+            this.logger.error(`🚨 MAINNET: ${unprotected.length} UNPROTECTED POSITIONS!`);
+            this.logger.error(`🚨 MANUAL INTERVENTION REQUIRED!`);
+            
+            for (const position of unprotected) {
+                const data = this.createPositionData(position);
+                this.logger.error(`🚨 UNPROTECTED: ${data.symbol} ${data.side} ${data.quantity} @ $${data.entryPrice}`);
+            }
+        }
+    }
+
+    async emergencyRepairPosition(position) {
+        if (config.environment !== 'testnet') return;
+        
+        const data = this.createPositionData(position);
+        this.logger.error(`🧪 EMERGENCY: ${data.symbol} has NO TP/SL! Repairing...`);
+        
+        try {
+            const currentPrice = await this.client.getPrice(data.symbol);
+            const levels = this.strategy.calculateLevels(currentPrice, data.side, data.symbol);
+            
+            this.logger.error(`🧪 Placing emergency TP/SL for ${data.symbol}`);
+            await this.placeTPSL(data.symbol, data.side, data.quantity, levels);
+            this.logger.error(`✅ EMERGENCY TP/SL placed for ${data.symbol}`);
+            
+        } catch (error) {
+            this.logger.error(`🧪 REPAIR FAILED for ${data.symbol}: ${error.message}`);
+            this.logger.error(`🧪 Closing unprotected position: ${data.symbol}`);
+            await this.emergencyClose(data.symbol, data.side, data.quantity);
+        }
+    }
+
+    // === POSITION MONITORING ===
     async monitorPositions() {
         if (!this.isRunning) return;
 
@@ -399,527 +522,89 @@ class ScalpingBot {
             const openPositions = await this.client.getOpenPositions();
             this.logger.debug(`Monitoring: ${openPositions.length} positions`);
             
-            await this.cleanupOrphanedOrders();
-            
-            // Clean up closed positions
-            for (const [positionId, position] of this.positions) {
-                const stillOpen = openPositions.some(p =>
-                    p.symbol === position.symbol &&
-                    Math.abs(parseFloat(p.positionAmt)) > 0
-                );
-
-                if (!stillOpen) {
-                    this.logger.position(
-                        `CLOSED - ${position.symbol} | ${position.side} | ` +
-                        `${position.quantity} @ $${position.entryPrice}`
-                    );
-                    
-                    this.orders.delete(`${position.symbol}_TP`);
-                    this.orders.delete(`${position.symbol}_SL`);
-                    this.positions.delete(positionId);
-                    this.setCooldown(position.symbol, 30);
-                }
+            if (config.environment === 'testnet' || Math.random() < this.safetyConfig.orphanCheckFrequency) {
+                await this.cleanupOrphanedOrders();
             }
+            
+            await this.processClosedPositions(openPositions);
+            
         } catch (error) {
             this.logger.error(error.message, 'Monitoring error');
         }
     }
 
-    // === STATUS & LOGS ===
-    async getStatus() {
-        const account = await this.client.getAccountInfo();
-        const positions = await this.client.getOpenPositions();
-        const openOrders = await this.client.getOpenOrders();
-
-        return {
-            running: this.isRunning,
-            environment: config.environment,
-            account: {
-                balance: parseFloat(account.availableBalance),
-                totalBalance: parseFloat(account.totalWalletBalance),
-                unrealizedPnl: parseFloat(account.totalUnrealizedProfit)
-            },
-            positions: positions.length,
-            openOrders: openOrders.length
-        };
-    }
-
-    getLogs(type = 'errors') {
-        return this.logger.readLog(type);
-    }
-
-    clearLogs(type = 'errors') {
-        this.logger.clearLog(type);
-    }
-}
-
-export default ScalpingBot;
-
-/*
-//Version 9 - WITH BATCH ORDERS + SAFETY CONFIG + EMERGENCY FAILSAFE + ORPHANED ORDER CLEANUP + LOGGING
-import BinanceClient from './binanceClient.js';
-import StrategyFactory from './strategies/strategyFactory.js';
-import config from './config.js';
-import Logger from './logger.js';
-
-class ScalpingBot {
-    constructor() {
-        this.client = new BinanceClient();
-        this.strategy = StrategyFactory.createStrategy(config.strategy.name, config);
-        this.isRunning = false;
-        this.positions = new Map();
-        this.orders = new Map(); // For state recovery only
-        this.cooldowns = new Map();
-        this.logger = new Logger();
-
-        // 🛡️ CHANGE 1: Get safety config
-        this.safetyConfig = config.getSafetyConfig();
-
-        this.logger.info(`Scalping Bot Started - Environment: ${config.environment.toUpperCase()}`);
-        this.logger.info(`Strategy: ${this.strategy.name}`);
-        
-        process.on('SIGINT', () => {
-            this.logger.info('Manual shutdown detected...');
-            process.exit(0);
-        });
-    }
-
-    setCooldown(symbol, seconds) {
-        this.cooldowns.set(symbol, Date.now() + (seconds * 1000));
-        this.logger.info(`${symbol} cooldown set: ${seconds} seconds`);
-    }
-
-    isInCooldown(symbol) {
-        const cooldownEnd = this.cooldowns.get(symbol);
-        if (cooldownEnd && Date.now() < cooldownEnd) {
-            const remaining = Math.ceil((cooldownEnd - Date.now()) / 1000);
-            this.logger.debug(`${symbol} in cooldown: ${remaining}s remaining`);
-            return true;
-        }
-        if (cooldownEnd && Date.now() >= cooldownEnd) {
-            this.cooldowns.delete(symbol);
-        }
-        return false;
-    }
-
-    async initialize() {
-        try {
-            config.validate();
-
-            const account = await this.client.getAccountInfo();
-            this.logger.info(`Connected to Binance ${config.environment}`);
-            this.logger.info(`Account Balance: ${parseFloat(account.availableBalance).toFixed(2)} USDT`);
-            this.logger.info(`Using ${this.strategy.name} strategy`);
-
-            for (const symbol of config.trading.symbols) {
-                try {
-                    await this.client.setMarginMode(symbol, config.trading.marginMode || 'ISOLATED');
-                    await this.client.setLeverage(symbol, config.trading.leverage);
-                    this.logger.info(`${symbol}: ${config.trading.leverage}x leverage (${config.trading.marginMode} mode)`);
-                } catch (error) {
-                    this.logger.error(error.message, `Failed to configure ${symbol}`);
-                }
-            }
-
-            return true;
-        } catch (error) {
-            this.logger.error(error.message, 'Initialization failed');
-            return false;
-        }
-    }
-
-    async start() {
-        if (this.isRunning) {
-            this.logger.info('Bot is already running');
-            return;
-        }
-
-        const initialized = await this.initialize();
-        if (!initialized) {
-            this.logger.error('Failed to initialize bot');
-            return;
-        }
-
-        this.isRunning = true;
-        this.logger.info('Starting scalping bot...');
-
-        // Recover live state
-        await this.recoverLiveState();
-
-        // Main trading loop
-        this.tradingInterval = setInterval(() => {
-            this.tradingCycle();
-        }, 7000);
-
-        // Monitor positions
-        this.monitorInterval = setInterval(() => {
-            this.monitorPositions();
-        }, 3000);
-    }
-
-    stop() {
-        this.isRunning = false;
-        if (this.tradingInterval) clearInterval(this.tradingInterval);
-        if (this.monitorInterval) clearInterval(this.monitorInterval);
-        this.logger.info('Scalping Bot Stopped');
-    }
-
-    async recoverLiveState() {
-        try {
-            this.logger.info('Recovering live state from Binance...');
-            
-            const openPositions = await this.client.getOpenPositions();
-            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
-            
-            this.logger.info(`Found ${activePositions.length} live positions on Binance`);
-            
-            for (const position of activePositions) {
-                const positionAmt = parseFloat(position.positionAmt);
-                const side = positionAmt > 0 ? 'LONG' : 'SHORT';
-                
-                const positionId = `recovered_${position.symbol}_${Date.now()}`;
-                
-                this.positions.set(positionId, {
-                    symbol: position.symbol,
-                    side: side,
-                    quantity: Math.abs(positionAmt),
-                    entryPrice: parseFloat(position.entryPrice),
-                    timestamp: Date.now(),
-                    stopLoss: parseFloat(position.stopLoss) || 0,
-                    takeProfit: 0
-                });
-                
-                this.logger.position(`Recovered ${position.symbol}: ${Math.abs(positionAmt)} (${side})`);
-                this.setCooldown(position.symbol, 30);
-            }
-            
-            this.logger.info('Live state recovery completed');
-            
-        } catch (error) {
-            this.logger.error(error.message, 'State recovery failed');
-        }
-    }
-
-    async tradingCycle() {
-        if (!this.isRunning) return;
-
-        try {
-            this.logger.debug(`Trading Cycle - ${new Date().toLocaleTimeString()}`);
-
-            const openPositions = await this.client.getOpenPositions();
-            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
-
-            this.logger.debug(`Open Positions: ${activePositions.length}/${config.trading.maxOpenPositions}`);
-
-            activePositions.forEach(p => {
-                this.logger.debug(`${p.symbol}: ${parseFloat(p.positionAmt)} (PnL: ${parseFloat(p.unRealizedProfit).toFixed(2)} USDT)`);
-            });
-
-            // 🛡️ CHANGE 2: Use safety config for orphan check frequency
-            if (Math.random() < this.safetyConfig.orphanCheckFrequency) {
-                await this.checkAndCleanupClosedPositions();
-            }
-
-            if (activePositions.length >= config.trading.maxOpenPositions) {
-                this.logger.debug(`Max positions (${config.trading.maxOpenPositions}) reached, skipping new trades`);
-                return;
-            }
-
-            for (const symbol of config.trading.symbols) {
-                await this.analyzeSymbol(symbol);
-            }
-        } catch (error) {
-            this.logger.error(error.message, 'Trading cycle error');
-        }
-    }
-
-    async analyzeSymbol(symbol) {
-        try {
-            // CHECK COOLDOWN FIRST
-            if (this.isInCooldown(symbol)) {
-                return;
-            }
-
-            // Skip if symbol already has open position
-            const openPositions = await this.client.getOpenPositions();
-            const existingPosition = openPositions.find(p =>
-                p.symbol === symbol && Math.abs(parseFloat(p.positionAmt)) > 0
-            );
-
-            if (existingPosition) {
-                const positionSide = parseFloat(existingPosition.positionAmt) > 0 ? 'LONG' : 'SHORT';
-                const pnl = parseFloat(existingPosition.unRealizedProfit).toFixed(2);
-                this.logger.debug(`${symbol} - Skipping analysis (${positionSide} position active, PnL: ${pnl} USDT)`);
-                return;
-            }
-
-            this.logger.debug(`Analyzing ${symbol}...`);
-
-            // Get recent market data
-            const klines = await this.client.getKlines(symbol, config.strategy.timeframe, 300);
-            this.logger.debug(`Got ${klines.length} klines`);
-
-            if (klines.length === 0) {
-                this.logger.debug(`No klines data for ${symbol}`);
-                return;
-            }
-
-            const currentPrice = klines[klines.length - 1].close;
-            this.logger.debug(`Current Price: $${currentPrice}`);
-
-            // Analyze with strategy
-            const signal = this.strategy.analyze(klines, symbol);
-            this.logger.debug(`Signal: ${signal.signal} - ${signal.reason}`);
-
-            if (signal.signal !== 'HOLD') {
-                this.logger.trade(`${symbol} Signal: ${signal.signal} - ${signal.reason}`);
-                await this.executeTrade(symbol, signal);
-            }
-        } catch (error) {
-            this.logger.error(error.message, `Error analyzing ${symbol}`);
-        }
-    }
-
-    async executeTrade(symbol, signal) {
-        try {
-            // CHECK COOLDOWN
-            if (this.isInCooldown(symbol)) {
-                this.logger.debug(`${symbol} - In cooldown, skipping trade`);
-                return;
-            }
-
-            const account = await this.client.getAccountInfo();
-            const availableBalance = parseFloat(account.availableBalance);
-            const currentPrice = signal.price;
-
-            const openPositions = await this.client.getOpenPositions();
-            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
-
-            if (activePositions.length >= config.trading.maxOpenPositions) {
-                this.logger.trade(`SAFETY: Max positions reached, cancelling ${symbol} trade`);
-                return;
-            }
-
-            const quantity = this.strategy.calculatePositionSize(
-                availableBalance,
-                currentPrice,
-                symbol
-            );
-
-            const symbolInfo = await this.client.getSymbolInfo(symbol);
-            const adjustedQuantity = this.client.adjustQuantityToStepSize(
-                quantity,
-                parseFloat(symbolInfo.filters.LOT_SIZE.stepSize)
-            );
-
-            const notional = adjustedQuantity * currentPrice;
-            const minNotional = parseFloat(symbolInfo.filters.MIN_NOTIONAL.notional);
-            if (notional < minNotional) {
-                this.logger.debug(`${symbol}: Notional ${notional.toFixed(2)} below minimum ${minNotional}, skipping`);
-                return;
-            }
-
-            this.logger.trade(`${symbol} Executing ${signal.signal}: ${adjustedQuantity} at ${currentPrice}`);
-
-            const levels = this.strategy.calculateLevels(
-                currentPrice,
-                signal.signal,
-                symbol
-            );
-
-            this.logger.trade(`${symbol} Risk Levels - Stop Loss: ${levels.stopLoss.toFixed(2)}, Take Profit: ${levels.takeProfit.toFixed(2)}`);
-
-            // 1. Place market order (opens position)
-            const order = await this.client.placeMarketOrder(symbol, signal.signal, adjustedQuantity);
-            this.logger.trade(`${symbol} Order placed: ${order.orderId}`);
-
-            // 2. Place TP/SL orders using BATCH ORDER (atomic operation)
-            await this.placeStopLossAndTakeProfit(symbol, signal.signal, adjustedQuantity, levels);
-
-            // Store position information
-            this.positions.set(order.orderId, {
-                symbol: symbol,
-                side: signal.signal,
-                quantity: adjustedQuantity,
-                entryPrice: currentPrice,
-                timestamp: Date.now(),
-                stopLoss: levels.stopLoss,
-                takeProfit: levels.takeProfit
-            });
-
-            // Log the complete position to file
-            this.logger.position(`OPEN - ${symbol} | ${signal.signal} | Qty: ${adjustedQuantity} | Entry: $${currentPrice} | SL: $${levels.stopLoss.toFixed(2)} | TP: $${levels.takeProfit.toFixed(2)}`);
-
-            this.setCooldown(symbol, 5);
-
-        } catch (error) {
-            this.logger.error(error, `Trade execution error for ${symbol}`);
-        }
-    }
-
-async placeStopLossAndTakeProfit(symbol, side, quantity, levels) {
-    try {
-        // 🚀 USE CLIENT'S BATCH METHOD - ALL PARAM HANDLING DONE THERE
-        this.logger.trade(`${symbol} Placing TP/SL batch orders...`);
-        const result = await this.client.placeTP_SL_BatchOrders(
-            symbol, 
-            side, 
-            quantity, 
-            levels.takeProfit, 
-            levels.stopLoss
-        );
-        
-        // Check if both orders succeeded
-        const tpSuccess = result[0] && result[0].orderId && !result[0].code;
-        const slSuccess = result[1] && result[1].orderId && !result[1].code;
-        
-        if (tpSuccess && slSuccess) {
-            this.logger.trade(`${symbol} TP/SL batch orders placed successfully`);
-            this.logger.trade(`${symbol} Take Profit: ${result[0].orderId} at ${levels.takeProfit}`);
-            this.logger.trade(`${symbol} Stop Loss: ${result[1].orderId} at ${levels.stopLoss}`);
-            
-            this.orders.set(`${symbol}_TP`, result[0].orderId);
-            this.orders.set(`${symbol}_SL`, result[1].orderId);
-        } else {
-            // ❌ BATCH FAILED - EMERGENCY CLOSE
-            this.logger.error(`🚨 ${symbol} BATCH ORDER FAILED - EMERGENCY CLOSE`);
-            if (result[0] && result[0].code) {
-                this.logger.error(`TP Order failed: ${result[0].msg}`);
-            }
-            if (result[1] && result[1].code) {
-                this.logger.error(`SL Order failed: ${result[1].msg}`);
-            }
-            
-            await this.emergencyClosePosition(symbol, side, quantity);
-            throw new Error('Batch TP/SL failed - position closed for safety');
-        }
-
-    } catch (error) {
-        this.logger.error(`🚨 Batch TP/SL error: ${error.message}`);
-        await this.emergencyClosePosition(symbol, side, quantity);
-        throw error;
-    }
-}
-
-    // 🛡️ EMERGENCY POSITION CLOSE
-    async emergencyClosePosition(symbol, side, quantity) {
-        try {
-            this.logger.error(`🚨 EMERGENCY: Closing unprotected position for ${symbol}`);
-            const closeSide = side === 'BUY' ? 'SELL' : 'BUY';
-            await this.client.placeMarketOrder(symbol, closeSide, quantity);
-            this.logger.error(`🚨 EMERGENCY: ${symbol} position closed - TP/SL protection failed`);
-        } catch (error) {
-            this.logger.error(`🚨 EMERGENCY CLOSE FAILED for ${symbol}: ${error.message}`);
-        }
-    }
-
-    // ADD ORPHANED ORDER CLEANUP METHOD
-    async checkAndCleanupClosedPositions() {
-        try {
-            const openPositions = await this.client.getOpenPositions();
-            const allOpenOrders = await this.client.getOpenOrders();
-            
-            this.logger.debug(`CHECKING FOR CLOSED POSITIONS:`);
-            this.logger.debug(`Open Positions: ${openPositions.length}`);
-            this.logger.debug(`Open Orders: ${allOpenOrders.length}`);
-            
-            // Get all symbols that currently have open positions
-            const symbolsWithOpenPositions = new Set(
-                openPositions
-                    .filter(p => Math.abs(parseFloat(p.positionAmt)) > 0)
-                    .map(p => p.symbol)
-            );
-            
-            // Find TP/SL orders for symbols that DON'T have open positions
-            const orphanedOrders = allOpenOrders.filter(order => 
-                (order.type === 'TAKE_PROFIT' || order.type === 'STOP_MARKET' || order.type === 'STOP') &&
-                !symbolsWithOpenPositions.has(order.symbol)
-            );
-            
-            if (orphanedOrders.length > 0) {
-                this.logger.error(`FOUND ${orphanedOrders.length} ORPHANED ORDERS (no position but orders exist):`);
-                
-                for (const order of orphanedOrders) {
-                    try {
-                        this.logger.debug(`${order.symbol}: Canceling ${order.type} order ${order.orderId}`);
-                        await this.client.cancelOrder(order.symbol, order.orderId);
-                        this.logger.debug(`Canceled: ${order.orderId}`);
-                        
-                        // Also clean up local tracking
-                        if (order.type === 'TAKE_PROFIT') {
-                            this.orders.delete(`${order.symbol}_TP`);
-                        } else if (order.type === 'STOP_MARKET' || order.type === 'STOP') {
-                            this.orders.delete(`${order.symbol}_SL`);
-                        }
-                        
-                    } catch (error) {
-                        this.logger.debug(`${order.orderId}: ${error.message}`);
-                    }
-                }
-            } else {
-                this.logger.debug(`No orphaned orders found`);
-            }
-            
-        } catch (error) {
-            this.logger.error(error.message, 'Closed position check error');
-        }
-    }
-
-    async monitorPositions() {
-        if (!this.isRunning) return;
-
-        try {
-            const openPositions = await this.client.getOpenPositions();
-            
-            this.logger.debug(`POSITION STATUS: ${openPositions.length} open`);
-            
-            // CHECK FOR CLOSED POSITIONS WITH ORPHANED ORDERS
-            await this.checkAndCleanupClosedPositions();
-            
-            // Clean up our tracked positions that closed
-            for (const [positionId, position] of this.positions) {
-                const stillOpen = openPositions.find(p =>
-                    p.symbol === position.symbol &&
+    async processClosedPositions(openPositions) {
+        const closedPositions = Array.from(this.positions.entries())
+            .filter(([_, position]) => {
+                if (!position?.symbol) return true;
+                return !openPositions.some(p =>
+                    p.symbol === position.symbol && 
                     Math.abs(parseFloat(p.positionAmt)) > 0
                 );
+            });
 
-                if (!stillOpen) {
-                    this.logger.position(`CLOSED - ${position.symbol} | ${position.side} | Qty: ${position.quantity} | Entry: $${position.entryPrice}`);
-                    
-                    // Clean up local tracking
-                    this.orders.delete(`${position.symbol}_TP`);
-                    this.orders.delete(`${position.symbol}_SL`);
-                    this.positions.delete(positionId);
-                    this.setCooldown(position.symbol, 30);
-                    
-                    this.logger.debug(`Cleaned up local tracking for ${position.symbol}`);
-                }
-            }
-
-        } catch (error) {
-            this.logger.error(error.message, 'Position monitoring error');
+        for (const [positionId, position] of closedPositions) {
+            await this.logClosedPosition(position);
+            this.orders.delete(`${position.symbol}_TP`);
+            this.orders.delete(`${position.symbol}_SL`);
+            this.positions.delete(positionId);
+            this.setCooldown(position.symbol, 30);
         }
     }
 
-    async getStatus() {
-        const account = await this.client.getAccountInfo();
-        const positions = await this.client.getOpenPositions();
-        const openOrders = await this.client.getOpenOrders();
+    async logClosedPosition(position) {
+        try {
+            if (!position?.symbol) {
+                this.logger.position(`CLOSED - Invalid position removed`);
+                return;
+            }
 
-        return {
-            running: this.isRunning,
-            environment: config.environment,
-            account: {
-                balance: parseFloat(account.availableBalance),
-                totalBalance: parseFloat(account.totalWalletBalance),
-                unrealizedPnl: parseFloat(account.totalUnrealizedProfit)
-            },
-            positions: positions.length,
-            openOrders: openOrders.length
-        };
+            const currentPrice = await this.client.getPrice(position.symbol);
+            const pnl = position.side === 'BUY' 
+                ? (currentPrice - position.entryPrice) * position.quantity
+                : (position.entryPrice - currentPrice) * position.quantity;
+            
+            this.logger.position(
+                `CLOSED - ${position.symbol} | ${position.side} | ` +
+                `${position.quantity} @ $${position.entryPrice.toFixed(4)} | ` +
+                `Exit: $${currentPrice.toFixed(4)} | PnL: $${pnl.toFixed(2)}`
+            );
+        } catch (error) {
+            this.logger.position(
+                `CLOSED - ${position.symbol} | ${position.side} | ` +
+                `${position.quantity} @ $${position.entryPrice.toFixed(4)}`
+            );
+        }
     }
 
-    // ADD LOG MANAGEMENT METHODS
+    // === STATUS & LOGS ===
+    async getStatus() {
+        try {
+            const account = await this.client.getAccountInfo();
+            const positions = await this.client.getOpenPositions();
+            const openOrders = await this.client.getOpenOrders();
+
+            return {
+                running: this.isRunning,
+                environment: config.environment,
+                account: {
+                    balance: parseFloat(account.availableBalance),
+                    totalBalance: parseFloat(account.totalWalletBalance),
+                    unrealizedPnl: parseFloat(account.totalUnrealizedProfit)
+                },
+                positions: positions.length,
+                openOrders: openOrders.length
+            };
+        } catch (error) {
+            this.logger.error(error.message, 'Status check error');
+            return {
+                running: this.isRunning,
+                environment: config.environment,
+                error: error.message
+            };
+        }
+    }
+
     getLogs(type = 'errors') {
         return this.logger.readLog(type);
     }
@@ -930,4 +615,3 @@ async placeStopLossAndTakeProfit(symbol, side, quantity, levels) {
 }
 
 export default ScalpingBot;
-*/

@@ -12,7 +12,11 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
     analyze(data, symbol = '') {
         try {
-            if (data.length < 100) return { signal: 'HOLD', reason: 'Insufficient data' };
+            if (data.length < 100) return { 
+                signal: 'HOLD', 
+                reason: 'Insufficient data',
+                indicators: {}
+            };
 
             const currentCandle = data[data.length - 1];
             const currentPrice = currentCandle.close;
@@ -32,7 +36,11 @@ class SimpleScalpingStrategy extends BaseStrategy {
             const atr = Indicators.ATR(highs, lows, closes, 14);
 
             if (!ema20 || !ema50 || !rsi || !atr) {
-                return { signal: 'HOLD', reason: 'Indicators not ready' };
+                return { 
+                    signal: 'HOLD', 
+                    reason: 'Indicators not ready',
+                    indicators: {}
+                };
             }
 
             // Volume analysis
@@ -46,12 +54,34 @@ class SimpleScalpingStrategy extends BaseStrategy {
             // Symbol-specific filters
             const symbolConfig = this.getSymbolConfig(symbol);
 
+            // Build indicators object for return
+            const indicators = {
+                trendStrength,
+                ema20,
+                ema50,
+                rsi,
+                atr,
+                atrPercentage,
+                volumeRatio,
+                volumeAvg,
+                currentPrice,
+                currentVolume
+            };
+
             if (volumeRatio < symbolConfig.filters.minVolume) {
-                return { signal: 'HOLD', reason: 'Low volume' };
+                return { 
+                    signal: 'HOLD', 
+                    reason: 'Low volume',
+                    indicators: indicators
+                };
             }
 
             if (atrPercentage < symbolConfig.filters.minATR) {
-                return { signal: 'HOLD', reason: 'Low volatility' };
+                return { 
+                    signal: 'HOLD', 
+                    reason: 'Low volatility',
+                    indicators: indicators
+                };
             }
 
             // Entry conditions
@@ -77,7 +107,8 @@ class SimpleScalpingStrategy extends BaseStrategy {
                 return {
                     signal: 'BUY',
                     reason: `Bullish trend with volume`,
-                    price: currentPrice
+                    price: currentPrice,
+                    indicators: indicators
                 };
             }
 
@@ -87,14 +118,25 @@ class SimpleScalpingStrategy extends BaseStrategy {
                 return {
                     signal: 'SELL',
                     reason: `Bearish trend with volume`,
-                    price: currentPrice
+                    price: currentPrice,
+                    indicators: indicators
                 };
             }
 
-            return { signal: 'HOLD', reason: 'No quality setup', price: currentPrice };
+            return { 
+                signal: 'HOLD', 
+                reason: 'No quality setup', 
+                price: currentPrice,
+                indicators: indicators
+            };
         } catch (error) {
             console.error(`Strategy error:`, error.message);
-            return { signal: 'HOLD', reason: 'Error', price: 0 };
+            return { 
+                signal: 'HOLD', 
+                reason: 'Error', 
+                price: 0,
+                indicators: {}
+            };
         }
     }
 

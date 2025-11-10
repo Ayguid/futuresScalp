@@ -13,7 +13,7 @@ class BinanceClient {
         this.rateLimiter = new RateLimitedQueue(1000, 100, 10);
     }
 
-    // Centralized rate-limited axios call
+    // ✅ FIXED: Better error handling that preserves Binance error details
     async makeAxiosCall(config) {
         return new Promise((resolve, reject) => {
             const wrappedFn = async (done) => {
@@ -21,7 +21,28 @@ class BinanceClient {
                     const response = await axios(config);
                     resolve(response.data);
                 } catch (error) {
-                    reject(error.response ? error.response.data : error);
+                    // ✅ PRESERVE BINANCE ERROR DETAILS
+                    if (error.response && error.response.data) {
+                        // Binance API error with detailed message
+                        reject({
+                            code: error.response.data.code,
+                            msg: error.response.data.msg,
+                            message: `Binance Error ${error.response.data.code}: ${error.response.data.msg}`,
+                            originalError: error.response.data
+                        });
+                    } else if (error.request) {
+                        // Network error
+                        reject({
+                            message: `Network Error: ${error.message || 'No response from Binance'}`,
+                            originalError: error
+                        });
+                    } else {
+                        // Other error
+                        reject({
+                            message: error.message,
+                            originalError: error
+                        });
+                    }
                 } finally {
                     done();
                 }
@@ -162,6 +183,7 @@ class BinanceClient {
             console.log(`✅ ${symbol} leverage set to: ${leverage}x`);
             return result;
         } catch (error) {
+            // ✅ NOW PRESERVES DETAILED ERROR MESSAGES
             console.log(`🔍 Leverage error details for ${symbol}:`);
             console.log(`   Error code: ${error.code}`);
             console.log(`   Error message: ${error.msg || error.message}`);
@@ -171,7 +193,7 @@ class BinanceClient {
                 return { alreadySet: true };
             } else {
                 console.error(`❌ Error setting leverage for ${symbol}:`, error.msg || error.message);
-                throw error;
+                throw error; // ✅ Now throws the detailed error object
             }
         }
     }
@@ -191,6 +213,7 @@ class BinanceClient {
             console.log(`✅ ${symbol} margin mode set to: ${marginType}`);
             return result;
         } catch (error) {
+            // ✅ NOW PRESERVES DETAILED ERROR MESSAGES
             console.log(`🔍 Margin mode error details for ${symbol}:`);
             console.log(`   Error code: ${error.code}`);
             console.log(`   Error message: ${error.msg || error.message}`);
@@ -200,7 +223,7 @@ class BinanceClient {
                 return { alreadySet: true };
             } else {
                 console.error(`❌ Error setting margin mode for ${symbol}:`, error.msg || error.message);
-                throw error;
+                throw error; // ✅ Now throws the detailed error object
             }
         }
     }
