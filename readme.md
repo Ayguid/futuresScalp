@@ -191,6 +191,7 @@ Test strategies on historical data before live trading:
    ```bash
    # Get historical klines from Binance Vision
    https://data.binance.vision/
+   https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
    ```
 
 2. **Place in Data Directory**

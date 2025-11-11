@@ -1,4 +1,3 @@
-// logger.js
 import fs from 'fs';
 import path from 'path';
 
@@ -10,7 +9,7 @@ class Logger {
         this.errorLog = path.join(this.logDir, 'errors.log');
         this.positionsLog = path.join(this.logDir, 'positions.log');
         this.tradesLog = path.join(this.logDir, 'trades.log');
-        this.signalsLog = path.join(this.logDir, 'signals.log'); // 🆕 ADD THIS
+        // 🚫 REMOVED: this.signalsLog
     }
 
     ensureLogDirectory() {
@@ -33,26 +32,11 @@ class Logger {
         }
     }
 
-    // 🆕 ADD THIS METHOD - for signal data (backtesting)
-    signal(symbol, signalData) {
-        const message = `${symbol} - ${signalData.signal}: ${signalData.reason} | DATA: ${JSON.stringify(signalData)}`;
-        console.log(`🎯 ${symbol} - ${signalData.signal}: ${signalData.reason}`);
-        this.writeToFile(this.signalsLog, message);
-    }
-
-    // 🆕 UPDATE this method to optionally accept signal data
-    position(message, signalData = null) {
+    // ✅ SIMPLIFIED - no signal data parameter needed anymore
+    position(message) {
         const fullMessage = `📊 ${message}`;
         console.log(fullMessage);
         this.writeToFile(this.positionsLog, fullMessage);
-        
-        // 🎯 If signal data provided, log it for backtesting
-        if (signalData) {
-            const symbol = message.split(' - ')[1]?.split(' ')[0];
-            if (symbol) {
-                this.signal(symbol, signalData);
-            }
-        }
     }
 
     error(message, context = '') {
@@ -77,14 +61,14 @@ class Logger {
         console.log(fullMessage);
     }
 
-    // 🆕 UPDATE readLog to include signals
+    // ✅ UPDATED - removed signals from fileMap
     readLog(fileType) {
         try {
             const fileMap = {
                 'errors': this.errorLog,
                 'positions': this.positionsLog,
-                'trades': this.tradesLog,
-                'signals': this.signalsLog // 🆕 ADD THIS
+                'trades': this.tradesLog
+                // 🚫 REMOVED: 'signals'
             };
             
             const filePath = fileMap[fileType];
@@ -97,14 +81,14 @@ class Logger {
         }
     }
 
-    // 🆕 UPDATE clearLog to include signals
+    // ✅ UPDATED - removed signals from fileMap
     clearLog(fileType) {
         try {
             const fileMap = {
                 'errors': this.errorLog,
                 'positions': this.positionsLog,
-                'trades': this.tradesLog,
-                'signals': this.signalsLog // 🆕 ADD THIS
+                'trades': this.tradesLog
+                // 🚫 REMOVED: 'signals'
             };
             
             const filePath = fileMap[fileType];

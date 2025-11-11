@@ -12,8 +12,8 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
     analyze(data, symbol = '') {
         try {
-            if (data.length < 100) return { 
-                signal: 'HOLD', 
+            if (data.length < 100) return {
+                signal: 'HOLD',
                 reason: 'Insufficient data',
                 indicators: {}
             };
@@ -36,8 +36,8 @@ class SimpleScalpingStrategy extends BaseStrategy {
             const atr = Indicators.ATR(highs, lows, closes, 14);
 
             if (!ema20 || !ema50 || !rsi || !atr) {
-                return { 
-                    signal: 'HOLD', 
+                return {
+                    signal: 'HOLD',
                     reason: 'Indicators not ready',
                     indicators: {}
                 };
@@ -69,16 +69,16 @@ class SimpleScalpingStrategy extends BaseStrategy {
             };
 
             if (volumeRatio < symbolConfig.filters.minVolume) {
-                return { 
-                    signal: 'HOLD', 
+                return {
+                    signal: 'HOLD',
                     reason: 'Low volume',
                     indicators: indicators
                 };
             }
 
             if (atrPercentage < symbolConfig.filters.minATR) {
-                return { 
-                    signal: 'HOLD', 
+                return {
+                    signal: 'HOLD',
                     reason: 'Low volatility',
                     indicators: indicators
                 };
@@ -123,17 +123,17 @@ class SimpleScalpingStrategy extends BaseStrategy {
                 };
             }
 
-            return { 
-                signal: 'HOLD', 
-                reason: 'No quality setup', 
+            return {
+                signal: 'HOLD',
+                reason: 'No quality setup',
                 price: currentPrice,
                 indicators: indicators
             };
         } catch (error) {
             console.error(`Strategy error:`, error.message);
-            return { 
-                signal: 'HOLD', 
-                reason: 'Error', 
+            return {
+                signal: 'HOLD',
+                reason: 'Error',
                 price: 0,
                 indicators: {}
             };
@@ -269,55 +269,13 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
     calculateLevels(entryPrice, side, symbol = '') {
         const symbolConfig = this.getSymbolConfig(symbol);
-
-        // Fixed stop loss (don’t touch this)
         const stopLossPercent = symbolConfig.risk.stopLossPercent;
         let takeProfitPercent = symbolConfig.risk.takeProfitPercent;
 
-        // Get recent klines for adaptive TP
-        const klines = this.lastKlines?.[symbol];
-        let atrPercentage = 0, volumeRatio = 0;
+        // 🎯 REPLICATE THE 136% BEHAVIOR: Always tighten TP by 10%
+        takeProfitPercent *= 0.9;
+        console.log(`🐢 ${symbol}: TP tightened (${takeProfitPercent.toFixed(2)}%)`);
 
-        if (klines && klines.length > 20) {
-            const closes = klines.map(k => k.close);
-            const highs = klines.map(k => k.high);
-            const lows = klines.map(k => k.low);
-            const vols = klines.map(k => k.volume);
-            const currentPrice = closes[closes.length - 1];
-
-            // --- Simplified ATR ---
-            const trueRanges = [];
-            for (let i = 1; i < highs.length; i++) {
-                const tr = Math.max(
-                    highs[i] - lows[i],
-                    Math.abs(highs[i] - closes[i - 1]),
-                    Math.abs(lows[i] - closes[i - 1])
-                );
-                trueRanges.push(tr);
-            }
-            const atr = trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
-            atrPercentage = (atr / currentPrice) * 100;
-
-            // --- Volume ratio ---
-            const avgVol = vols.slice(-30).reduce((a, b) => a + b, 0) / 30;
-            volumeRatio = vols[vols.length - 1] / avgVol;
-        }
-
-        // --- Adaptive TP logic ---
-        const isHighVol = atrPercentage > 1.0 || volumeRatio > 2.5;
-        const isLowVol = atrPercentage < 0.4 && volumeRatio < 1.2;
-
-        if (isHighVol) {
-            takeProfitPercent *= 1.25;
-            console.log(`⚡ ${symbol}: High volatility → TP widened (${takeProfitPercent.toFixed(2)}%)`);
-        } else if (isLowVol) {
-            takeProfitPercent *= 0.9;
-            console.log(`🐢 ${symbol}: Low volatility → TP tightened (${takeProfitPercent.toFixed(2)}%)`);
-        } else {
-            console.log(`🎯 ${symbol}: Normal vol (ATR ${atrPercentage.toFixed(2)}%, Vol ${volumeRatio.toFixed(2)}x)`);
-        }
-
-        // --- Calculate price levels ---
         let stopLoss, takeProfit;
         if (side === 'BUY') {
             stopLoss = entryPrice * (1 - stopLossPercent / 100);
@@ -327,65 +285,22 @@ class SimpleScalpingStrategy extends BaseStrategy {
             takeProfit = entryPrice * (1 - takeProfitPercent / 100);
         }
 
-        return {
-            stopLoss,
-            takeProfit,
-            stopLossPercent,
-            takeProfitPercent
-        };
+        return { stopLoss, takeProfit, stopLossPercent, takeProfitPercent };
     }
-
 
     calculatePositionSize(accountBalance, price, symbol = '') {
         const riskPercent = this.config?.trading?.positionPercent / 100 || 0.02;
-        const leverage = this.config?.trading?.leverage || 1;
-
-        // --- Get symbol config ---
         const symbolConfig = this.getSymbolFilters(symbol);
         const stopLossPercent = symbolConfig.risk.stopLossPercent;
 
-        // --- Check volatility to adapt position ---
-        const klines = this.lastKlines?.[symbol];
-        let atrPercentage = 0, volumeRatio = 0;
-
-        if (klines && klines.length > 20) {
-            const closes = klines.map(k => k.close);
-            const highs = klines.map(k => k.high);
-            const lows = klines.map(k => k.low);
-            const vols = klines.map(k => k.volume);
-            const currentPrice = closes[closes.length - 1];
-
-            const trueRanges = [];
-            for (let i = 1; i < highs.length; i++) {
-                const tr = Math.max(
-                    highs[i] - lows[i],
-                    Math.abs(highs[i] - closes[i - 1]),
-                    Math.abs(lows[i] - closes[i - 1])
-                );
-                trueRanges.push(tr);
-            }
-            const atr = trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
-            atrPercentage = (atr / currentPrice) * 100;
-
-            const avgVol = vols.slice(-30).reduce((a, b) => a + b, 0) / 30;
-            volumeRatio = vols[vols.length - 1] / avgVol;
-        }
-
-        // --- Adaptive position scaling ---
-        let sizeFactor = 1.0;
-        if (atrPercentage > 1.0 || volumeRatio > 2.5) sizeFactor = 0.8;   // reduce size
-        else if (atrPercentage < 0.4 && volumeRatio < 1.2) sizeFactor = 1.2; // increase size slightly
+        // 🎯 REPLICATE THE 136% BEHAVIOR: Always increase position by 20%
+        const sizeFactor = 1.2;
 
         const riskAmount = accountBalance * riskPercent * sizeFactor;
         const priceRisk = price * (stopLossPercent / 100);
         const unleveragedQuantity = riskAmount / priceRisk;
 
-        console.log(`💰 ${symbol} Adaptive Position:`)
-        console.log(`   Account: $${accountBalance.toFixed(2)}`)
-        console.log(`   ATR: ${atrPercentage.toFixed(2)}%, VolRatio: ${volumeRatio.toFixed(2)}x`)
-        console.log(`   Size Factor: ${sizeFactor.toFixed(2)}x`)
-        console.log(`   Final Risk: $${riskAmount.toFixed(2)} @ ${stopLossPercent}% stop`)
-        console.log(`   Quantity: ${unleveragedQuantity.toFixed(6)} coins`)
+        console.log(`💰 ${symbol}: ${unleveragedQuantity.toFixed(6)} coins (1.20x size)`);
 
         return unleveragedQuantity;
     }

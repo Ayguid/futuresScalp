@@ -649,9 +649,9 @@ class BinanceCSVBacktester {
         if (this.currentCycle % 200 === 0) {
             console.log(`   🎯 ${symbol} ENTERED ${side} at $${actualEntryPrice.toFixed(2)} (signal: $${signalPrice.toFixed(2)})`);
             console.log(`      Slippage: $${position.entrySlippage.toFixed(2)} | Quantity: ${actualQuantity.toFixed(6)}`);
-            if (execution.partial) {
+            /*if (execution.partial) {
                 console.log(`      ⚠️ Partial fill: ${execution.unfilledAmount.toFixed(6)} unfilled`);
-            }
+            }*/
         }
 
         return position;

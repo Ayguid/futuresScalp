@@ -136,6 +136,20 @@ class BinanceClient {
         return await this.privateRequest('GET', '/fapi/v1/openOrders', params);
     }
 
+    async getAllOrders(symbol, limit = 50) {
+        return await this.privateRequest('GET', '/fapi/v1/allOrders', {
+            symbol: symbol,
+            limit: limit
+        });
+    }
+
+    async getOrder(symbol, orderId) {
+        return await this.privateRequest('GET', '/fapi/v1/order', {
+            symbol: symbol,
+            orderId: orderId
+        });
+    }
+
     async placeMarketOrder(symbol, side, quantity) {
         const order = {
             symbol: symbol,
