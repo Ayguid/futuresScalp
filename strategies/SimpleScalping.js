@@ -141,10 +141,15 @@ class SimpleScalpingStrategy extends BaseStrategy {
     }
 
     getSymbolConfig(symbol) {
+        const useWiderStops = this.config.trading.stopMode === 'wide';
+        
         const configs = {
             'BTCUSDT': {
                 filters: { minVolume: 1.2, minATR: 0.3 },
-                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
+                risk: { 
+                    stopLossPercent: useWiderStops ? 0.80 : 0.50, // 0.8% live, 0.5% backtest
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                },
                 entryConditions: {
                     buy: { minRSI: 48, maxRSI: 65, minVolume: 1.4, priceMovement: 1.005 },
                     sell: { minRSI: 35, maxRSI: 52, minVolume: 1.4, priceMovement: 0.995 }
@@ -152,7 +157,10 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'BNBUSDT': {
                 filters: { minVolume: 1.2, minATR: 0.3 },
-                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
+                risk: { 
+                    stopLossPercent: useWiderStops ? 0.80 : 0.50,
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                },
                 entryConditions: {
                     buy: { minRSI: 48, maxRSI: 65, minVolume: 1.4, priceMovement: 1.005 },
                     sell: { minRSI: 35, maxRSI: 52, minVolume: 1.4, priceMovement: 0.995 }
@@ -160,7 +168,10 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'ETHUSDT': {
                 filters: { minVolume: 1.3, minATR: 0.4 },
-                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
+                risk: { 
+                    stopLossPercent: useWiderStops ? 0.80 : 0.50,
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                },
                 entryConditions: {
                     buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
                     sell: { minRSI: 30, maxRSI: 50, minVolume: 1.5, priceMovement: 0.992 }
@@ -168,7 +179,10 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'XRPUSDT': {
                 filters: { minVolume: 1.3, minATR: 0.4 },
-                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
+                risk: { 
+                    stopLossPercent: useWiderStops ? 0.80 : 0.50,
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                },
                 entryConditions: {
                     buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
                     sell: { minRSI: 30, maxRSI: 50, minVolume: 1.5, priceMovement: 0.992 }
@@ -176,7 +190,10 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'ADAUSDT': {
                 filters: { minVolume: 1.3, minATR: 0.4 },
-                risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
+                risk: { 
+                    stopLossPercent: useWiderStops ? 0.80 : 0.50,
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                },
                 entryConditions: {
                     buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
                     sell: { minRSI: 30, maxRSI: 50, minVolume: 1.5, priceMovement: 0.992 }
@@ -184,7 +201,10 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'SOLUSDT': {
                 filters: { minVolume: 1.4, minATR: 0.6 },
-                risk: { stopLossPercent: 0.75, takeProfitPercent: 1.50 },
+                risk: { 
+                    stopLossPercent: useWiderStops ? 1.20 : 0.75, // 1.2% live, 0.75% backtest
+                    takeProfitPercent: useWiderStops ? 2.40 : 1.50 
+                },
                 entryConditions: {
                     buy: { minRSI: 45, maxRSI: 70, minVolume: 1.6, priceMovement: 1.010 },
                     sell: { minRSI: 25, maxRSI: 55, minVolume: 1.6, priceMovement: 0.990 }
@@ -192,7 +212,10 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'DOGEUSDT': {
                 filters: { minVolume: 1.5, minATR: 0.7 },
-                risk: { stopLossPercent: 0.80, takeProfitPercent: 1.60 },
+                risk: { 
+                    stopLossPercent: useWiderStops ? 1.28 : 0.80, // 1.28% live, 0.8% backtest
+                    takeProfitPercent: useWiderStops ? 2.56 : 1.60 
+                },
                 entryConditions: {
                     buy: { minRSI: 40, maxRSI: 72, minVolume: 1.7, priceMovement: 1.012 },
                     sell: { minRSI: 20, maxRSI: 58, minVolume: 1.7, priceMovement: 0.988 }
@@ -202,7 +225,10 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
         return configs[symbol] || {
             filters: { minVolume: 1.2, minATR: 0.3 },
-            risk: { stopLossPercent: 0.50, takeProfitPercent: 1.00 },
+            risk: { 
+                stopLossPercent: useWiderStops ? 0.80 : 0.50,
+                takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+            },
             entryConditions: {
                 buy: { minRSI: 50, maxRSI: 65, minVolume: 1.4, priceMovement: 1.006 },
                 sell: { minRSI: 35, maxRSI: 50, minVolume: 1.4, priceMovement: 0.994 }

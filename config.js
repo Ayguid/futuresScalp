@@ -23,14 +23,16 @@ const config = {
         leverage: 4,
         positionPercent: 0.5,      //% risk per trade
         maxOpenPositions: 3,
-        marginMode: 'ISOLATED'
+        marginMode: 'ISOLATED',
+        stopMode: 'wide', // 'tight' or 'wide'
+        cooldowns: {
+            afterOpen: 300,    // 5 minutes after opening position
+            afterClose: 600,   // 10 minutes after closing position
+        },
     },
-
     strategy: {
         name: 'simple_scalping',
         timeframe: '15m',
-        minTimeBetweenTrades: 60 * 60 * 1000,  // 1 hour between trades
-        maxHoldTime: 8 * 60 * 60 * 1000        // Max 8 hours hold time
     },
 
     safety: {
