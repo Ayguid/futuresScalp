@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import config from '#config';
 import RateLimitedQueue from '#utils/RateLimitedQueue';
-
+//https://developers.binance.com/docs/derivatives/usds-margined-futures
 class BinanceClient {
     constructor() {
         this.config = config.getCurrentConfig();

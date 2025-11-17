@@ -24,7 +24,7 @@ const config = {
         positionPercent: 0.5,      //% risk per trade
         maxOpenPositions: 3,
         marginMode: 'ISOLATED',
-        stopMode: 'wide', // 'tight' or 'wide'
+        stopMode: 'tight', // 'tight' or 'wide'
         cooldowns: {
             afterOpen: 300,    // 5 minutes after opening position
             afterClose: 600,   // 10 minutes after closing position

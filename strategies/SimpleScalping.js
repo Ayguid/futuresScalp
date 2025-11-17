@@ -142,13 +142,13 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
     getSymbolConfig(symbol) {
         const useWiderStops = this.config.trading.stopMode === 'wide';
-        
+
         const configs = {
             'BTCUSDT': {
                 filters: { minVolume: 1.2, minATR: 0.3 },
-                risk: { 
+                risk: {
                     stopLossPercent: useWiderStops ? 0.80 : 0.50, // 0.8% live, 0.5% backtest
-                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00
                 },
                 entryConditions: {
                     buy: { minRSI: 48, maxRSI: 65, minVolume: 1.4, priceMovement: 1.005 },
@@ -157,9 +157,9 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'BNBUSDT': {
                 filters: { minVolume: 1.2, minATR: 0.3 },
-                risk: { 
+                risk: {
                     stopLossPercent: useWiderStops ? 0.80 : 0.50,
-                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00
                 },
                 entryConditions: {
                     buy: { minRSI: 48, maxRSI: 65, minVolume: 1.4, priceMovement: 1.005 },
@@ -168,9 +168,9 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'ETHUSDT': {
                 filters: { minVolume: 1.3, minATR: 0.4 },
-                risk: { 
+                risk: {
                     stopLossPercent: useWiderStops ? 0.80 : 0.50,
-                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00
                 },
                 entryConditions: {
                     buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
@@ -179,9 +179,9 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'XRPUSDT': {
                 filters: { minVolume: 1.3, minATR: 0.4 },
-                risk: { 
+                risk: {
                     stopLossPercent: useWiderStops ? 0.80 : 0.50,
-                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00
                 },
                 entryConditions: {
                     buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
@@ -190,9 +190,9 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'ADAUSDT': {
                 filters: { minVolume: 1.3, minATR: 0.4 },
-                risk: { 
+                risk: {
                     stopLossPercent: useWiderStops ? 0.80 : 0.50,
-                    takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                    takeProfitPercent: useWiderStops ? 1.60 : 1.00
                 },
                 entryConditions: {
                     buy: { minRSI: 50, maxRSI: 68, minVolume: 1.5, priceMovement: 1.008 },
@@ -201,9 +201,9 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'SOLUSDT': {
                 filters: { minVolume: 1.4, minATR: 0.6 },
-                risk: { 
+                risk: {
                     stopLossPercent: useWiderStops ? 1.20 : 0.75, // 1.2% live, 0.75% backtest
-                    takeProfitPercent: useWiderStops ? 2.40 : 1.50 
+                    takeProfitPercent: useWiderStops ? 2.40 : 1.50
                 },
                 entryConditions: {
                     buy: { minRSI: 45, maxRSI: 70, minVolume: 1.6, priceMovement: 1.010 },
@@ -212,9 +212,9 @@ class SimpleScalpingStrategy extends BaseStrategy {
             },
             'DOGEUSDT': {
                 filters: { minVolume: 1.5, minATR: 0.7 },
-                risk: { 
+                risk: {
                     stopLossPercent: useWiderStops ? 1.28 : 0.80, // 1.28% live, 0.8% backtest
-                    takeProfitPercent: useWiderStops ? 2.56 : 1.60 
+                    takeProfitPercent: useWiderStops ? 2.56 : 1.60
                 },
                 entryConditions: {
                     buy: { minRSI: 40, maxRSI: 72, minVolume: 1.7, priceMovement: 1.012 },
@@ -225,9 +225,9 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
         return configs[symbol] || {
             filters: { minVolume: 1.2, minATR: 0.3 },
-            risk: { 
+            risk: {
                 stopLossPercent: useWiderStops ? 0.80 : 0.50,
-                takeProfitPercent: useWiderStops ? 1.60 : 1.00 
+                takeProfitPercent: useWiderStops ? 1.60 : 1.00
             },
             entryConditions: {
                 buy: { minRSI: 50, maxRSI: 65, minVolume: 1.4, priceMovement: 1.006 },
@@ -292,7 +292,7 @@ class SimpleScalpingStrategy extends BaseStrategy {
         return candle.close < candle.open &&
             (candle.open - candle.close) > (candle.high - candle.low) * 0.3;
     }
-
+    /*
     calculateLevels(entryPrice, side, symbol = '') {
         const symbolConfig = this.getSymbolConfig(symbol);
         const stopLossPercent = symbolConfig.risk.stopLossPercent;
@@ -313,7 +313,51 @@ class SimpleScalpingStrategy extends BaseStrategy {
 
         return { stopLoss, takeProfit, stopLossPercent, takeProfitPercent };
     }
+    */
+    calculateLevels(entryPrice, side, symbol = '', indicators = {}) {
+        const symbolConfig = this.getSymbolConfig(symbol);
+        let takeProfitPercent = symbolConfig.risk.takeProfitPercent;
 
+        // 🎯 REPLICATE THE 136% BEHAVIOR: Always tighten TP by 10%
+        takeProfitPercent *= 0.9;
+
+        let stopLoss, takeProfit;
+
+        // ✅ ATR-BASED STOPS (if ATR data available)
+        if (indicators.atr && indicators.currentPrice) {
+            const useWiderStops = this.config.trading.stopMode === 'wide';
+            const atrMultiplier = useWiderStops ? 1.5 : 1.0; // 1.5 ATR for wide, 1.0 ATR for tight
+
+            const stopLossDistance = indicators.atr * atrMultiplier;
+            const stopLossPercentActual = (stopLossDistance / entryPrice) * 100;
+
+            if (side === 'BUY') {
+                stopLoss = entryPrice - stopLossDistance;
+                takeProfit = entryPrice + (stopLossDistance * 2); // 1:2 risk-reward
+            } else {
+                stopLoss = entryPrice + stopLossDistance;
+                takeProfit = entryPrice - (stopLossDistance * 2); // 1:2 risk-reward
+            }
+
+            console.log(`🎯 ${symbol}: ATR-based ${useWiderStops ? 'WIDE' : 'TIGHT'} | SL: ${stopLossPercentActual.toFixed(2)}% | ATR: ${indicators.atr.toFixed(4)}`);
+
+        } else {
+            // ✅ FALLBACK TO PERCENTAGE-BASED STOPS (original logic)
+            const stopLossPercent = symbolConfig.risk.stopLossPercent;
+
+            if (side === 'BUY') {
+                stopLoss = entryPrice * (1 - stopLossPercent / 100);
+                takeProfit = entryPrice * (1 + takeProfitPercent / 100);
+            } else {
+                stopLoss = entryPrice * (1 + stopLossPercent / 100);
+                takeProfit = entryPrice * (1 - takeProfitPercent / 100);
+            }
+
+            console.log(`🐢 ${symbol}: Percentage-based | TP tightened (${takeProfitPercent.toFixed(2)}%)`);
+        }
+
+        return { stopLoss, takeProfit };
+    }
     calculatePositionSize(accountBalance, price, symbol = '') {
         const riskPercent = this.config?.trading?.positionPercent / 100 || 0.02;
         const symbolConfig = this.getSymbolFilters(symbol);
