@@ -9,13 +9,18 @@ class ScalpingBot {
         this.strategy = StrategyFactory.createStrategy(config.strategy.name, config);
         this.logger = new Logger();
         this.isRunning = false;
-        this.positions = new Map();
+        this.positions = new Map(); // 🎯 ID -> Position (single source of truth)
         this.orders = new Map();
         this.cooldowns = new Map();
         this.pendingOperations = new Map();
-        this.safetyConfig = config.getSafetyConfig();
         this.initBot();
     }
+
+    // === ID MANAGEMENT ===
+    generatePositionId(symbol, orderId) {
+        return `${symbol}_${orderId}`; // 🎯 Deterministic ID generation
+    }
+
     // === INITIALIZATION ===
     initBot() {
         this.logger.info(`Bot Started - ${config.environment.toUpperCase()}`);
@@ -26,23 +31,16 @@ class ScalpingBot {
         );
         process.on('SIGINT', () => this.stop());
     }
+
     // === UTILITIES ===
     sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-    createPositionData = (position) => ({
-        symbol: position.symbol,
-        side: parseFloat(position.positionAmt) > 0 ? 'LONG' : 'SHORT',
-        quantity: Math.abs(parseFloat(position.positionAmt)),
-        entryPrice: parseFloat(position.entryPrice),
-        timestamp: Date.now(),
-        stopLoss: parseFloat(position.stopLoss) || 0,
-        takeProfit: position.takeProfit ? parseFloat(position.takeProfit) : 0
-    });
-    getEnvConfig = (testnet, mainnet) => config.environment === 'testnet' ? testnet : mainnet;
+
     // === COOLDOWN MANAGEMENT ===
     setCooldown(symbol, seconds) {
         this.cooldowns.set(symbol, Date.now() + (seconds * 1000));
         this.logger.info(`${symbol} cooldown: ${seconds}s`);
     }
+
     isInCooldown(symbol) {
         const cooldownEnd = this.cooldowns.get(symbol);
         if (!cooldownEnd || Date.now() >= cooldownEnd) {
@@ -53,6 +51,7 @@ class ScalpingBot {
         this.logger.debug(`${symbol} cooldown: ${remaining}s remaining`);
         return true;
     }
+
     // === INITIALIZATION & CONFIGURATION ===
     async initialize() {
         try {
@@ -77,6 +76,7 @@ class ScalpingBot {
             this.logger.error(error.message, `Failed to configure ${symbol}`);
         }
     }
+
     // === BOT LIFECYCLE ===
     async start() {
         if (this.isRunning) {
@@ -94,7 +94,13 @@ class ScalpingBot {
 
         await this.recoverLiveState();
         this.tradingInterval = setInterval(() => this.tradingCycle(), 10000);
-        this.monitorInterval = setInterval(() => this.monitorPositions(), 5000);
+        //this.monitorInterval = setInterval(() => this.monitorPositions(), 5000);
+        // Monitor frequently (3s) only when positions exist
+        this.monitorInterval = setInterval(() => {
+            if (this.positions.size > 0) {
+                this.monitorPositions();
+            }
+        }, 3000);
     }
 
     stop() {
@@ -103,6 +109,7 @@ class ScalpingBot {
         clearInterval(this.monitorInterval);
         this.logger.info('Bot stopped');
     }
+
     // === TRADING CYCLE ===
     async tradingCycle() {
         if (!this.isRunning) return;
@@ -215,10 +222,14 @@ class ScalpingBot {
 
             this.logger.trade(`✅ ORDER SUCCESS: ${symbol} ${signal.signal} ${quantity} @ $${actualEntryPrice} - Order ID: ${marketOrder.orderId}`);
 
-            await this.placeTPSL(symbol, signal.signal, quantity, actualLevels);
+            // 🎯 FIX: Capture the returned TP/SL orders
+            const tpSlOrders = await this.placeTPSL(symbol, signal.signal, quantity, actualLevels);
             protectionSuccess = true;
-
-            this.positions.set(`${symbol}_${marketOrder.orderId}`, {
+            // 🎯 FIX: Store the orders in the orders Map
+            this.storeTPSLOrders(symbol, tpSlOrders.tpOrderId, tpSlOrders.slOrderId);
+            const positionId = this.generatePositionId(symbol, marketOrder.orderId);
+            this.positions.set(positionId, {
+                positionId,
                 symbol,
                 side: signal.signal,
                 quantity: quantity,
@@ -226,7 +237,10 @@ class ScalpingBot {
                 timestamp: Date.now(),
                 stopLoss: actualLevels.stopLoss,
                 takeProfit: actualLevels.takeProfit,
-                marketOrderId: marketOrder.orderId
+                marketOrderId: marketOrder.orderId,
+                // 🎯 FIX: Now tpSlOrders is defined
+                tpOrderId: tpSlOrders.tpOrderId,
+                slOrderId: tpSlOrders.slOrderId
             });
 
             const indicatorLog = signal.indicators ?
@@ -282,6 +296,7 @@ class ScalpingBot {
             throw new Error(`Order ${orderId} not filled within ${timeout}ms and could not check final status: ${finalError.message}`);
         }
     }
+
     // === TP/SL MANAGEMENT ===
     async placeTPSL(symbol, side, quantity, levels) {
         this.logger.trade(`${symbol} Placing TP/SL: TP=$${levels.takeProfit.toFixed(4)}, SL=$${levels.stopLoss.toFixed(4)}`);
@@ -291,37 +306,26 @@ class ScalpingBot {
         );
 
         const [tpOrder, slOrder] = result;
-        const tpSuccess = tpOrder?.orderId && !tpOrder.code;
-        const slSuccess = slOrder?.orderId && !slOrder.code;
 
-        if (tpSuccess && slSuccess) {
-            this.storeTPSLOrders(symbol, tpOrder.orderId, slOrder.orderId);
-        } else {
-            this.handlePartialTPSLFailure(symbol, tpOrder, slOrder);
-        }
+        // 🎯 RETURN the order IDs so we can store them with the position
+        return {
+            tpOrderId: tpOrder?.orderId,
+            slOrderId: slOrder?.orderId
+        };
     }
 
     storeTPSLOrders(symbol, tpOrderId, slOrderId) {
         if (tpOrderId) {
             this.logger.trade(`TP placed: ${tpOrderId}`);
             this.orders.set(`${symbol}_TP`, tpOrderId);
+            // 🎯 FIX: Store reverse mapping for order lookup
+            this.orders.set(`order_${tpOrderId}`, { type: 'TP', symbol });
         }
         if (slOrderId) {
             this.logger.trade(`SL placed: ${slOrderId}`);
             this.orders.set(`${symbol}_SL`, slOrderId);
-        }
-    }
-
-    handlePartialTPSLFailure(symbol, tpOrder, slOrder) {
-        this.logger.warn(`⚠️ ${symbol} Batch partial failure - monitoring`);
-        this.storeTPSLOrders(symbol, tpOrder?.orderId, slOrder?.orderId);
-
-        if (tpOrder?.code) this.logger.error(`TP failed: ${tpOrder.msg || tpOrder.code}`);
-        if (slOrder?.code) this.logger.error(`SL failed: ${slOrder.msg || slOrder.code}`);
-
-        if (!tpOrder?.orderId && !slOrder?.orderId) {
-            this.logger.error(`🚨 ${symbol} BATCH COMPLETE FAILURE`);
-            throw new Error('Batch TP/SL failed');
+            // 🎯 FIX: Store reverse mapping for order lookup
+            this.orders.set(`order_${slOrderId}`, { type: 'SL', symbol });
         }
     }
 
@@ -349,11 +353,29 @@ class ScalpingBot {
             }
 
             const closeSide = positionAmt > 0 ? 'SELL' : 'BUY';
-            const positionSide = positionAmt > 0 ? 'LONG' : 'SHORT';
 
-            this.logger.error(`🚨 Closing ${positionSide} position: ${currentSize} ${symbol}`);
+            // 🎯 FIND TRACKED POSITION FOR LOGGING
+            const trackedPosition = Array.from(this.positions.values())
+                .find(p => p.symbol === symbol);
+
+            this.logger.error(`🚨 Closing position: ${currentSize} ${symbol}`);
             const result = await this.client.placeMarketOrder(symbol, closeSide, currentSize);
-            this.logger.error(`🚨 ${symbol} closed. ${positionSide}->${closeSide} Size: ${currentSize} Order: ${result.orderId}`);
+
+            // 🎯 LOG IN STANDARD FORMAT
+            if (trackedPosition) {
+                // 🎯 USE ACTUAL EXECUTION PRICE FOR ACCURATE P&L
+                const exitPrice = parseFloat(result.avgPrice) || await this.client.getPrice(symbol);
+                const pnl = trackedPosition.side === 'BUY'
+                    ? (exitPrice - trackedPosition.entryPrice) * trackedPosition.quantity
+                    : (trackedPosition.entryPrice - exitPrice) * trackedPosition.quantity;
+
+                this.logger.position(
+                    `CLOSED - ${symbol} | ${trackedPosition.side} | ` +
+                    `${trackedPosition.quantity} @ $${trackedPosition.entryPrice.toFixed(4)} | ` +
+                    `Exit: $${exitPrice.toFixed(4)} | PnL: $${pnl.toFixed(2)} | ` +
+                    `Reason: EMERGENCY | TradeID: ${trackedPosition.positionId}`
+                );
+            }
 
             this.cleanupPositionTracking(symbol);
         } catch (error) {
@@ -363,10 +385,10 @@ class ScalpingBot {
     }
 
     cleanupPositionTracking(symbol) {
-        for (const [key, position] of this.positions.entries()) {
+        // 🎯 Clean up by symbol using ID pattern matching
+        for (const [positionId, position] of this.positions.entries()) {
             if (position.symbol === symbol) {
-                this.positions.delete(key);
-                break;
+                this.positions.delete(positionId);
             }
         }
         this.cleanupPositionOrders(symbol);
@@ -387,335 +409,205 @@ class ScalpingBot {
             this.logger.error(`Cancel all orders failed for ${symbol}: ${error.message}`);
         }
     }
-    // === SIMPLIFIED POSITION MONITORING ===
+
     async monitorPositions() {
         if (!this.isRunning) return;
 
         try {
-            const openPositions = await this.client.getOpenPositions();
-            this.logger.debug(`Monitoring: ${openPositions.length} positions`);
+            // 🎯 CREATE SNAPSHOT to avoid modification during iteration
+            const positionsSnapshot = Array.from(this.positions.entries());
+            for (const [positionId, position] of positionsSnapshot) {
+                // Skip if position was already closed in this iteration
+                if (!this.positions.has(positionId)) continue;
+                
+                // Check TP order directly
+                if (position.tpOrderId) {
+                    try {
+                        const tpOrder = await this.client.getOrder(position.symbol, position.tpOrderId);
+                        if (tpOrder.status === 'FILLED') {
+                            await this.closePositionByOrder(positionId, position, 'TAKE_PROFIT', tpOrder);
+                            continue;
+                        }
+                    } catch (error) {
+                        this.logger.debug(`TP order ${position.tpOrderId} not found, may be filled: ${error.message}`);
+                        // If order not found, check if position still exists on Binance
+                        const openPositions = await this.client.getOpenPositions();
+                        const stillExists = openPositions.some(p =>
+                            p.symbol === position.symbol &&
+                            Math.abs(parseFloat(p.positionAmt)) > 0
+                        );
+                        if (!stillExists) {
+                            await this.closePositionByOrder(positionId, position, 'TAKE_PROFIT', {
+                                avgPrice: position.takeProfit
+                            });
+                            continue; // 🎯 ADD THIS CONTINUE!
+                        }
+                    }
+                }
 
-            // ✅ SIMPLE CLEANUP - ONCE PER CYCLE
-            await this.cleanupOrphanedOrders(openPositions);
-
-            await this.processClosedPositions(openPositions);
+                // Check SL order directly  
+                if (position.slOrderId) {
+                    try {
+                        const slOrder = await this.client.getOrder(position.symbol, position.slOrderId);
+                        if (slOrder.status === 'FILLED') {
+                            await this.closePositionByOrder(positionId, position, 'STOP_LOSS', slOrder);
+                            continue;
+                        }
+                    } catch (error) {
+                        this.logger.debug(`SL order ${position.slOrderId} not found, may be filled: ${error.message}`);
+                        // If order not found, check if position still exists on Binance
+                        const openPositions = await this.client.getOpenPositions();
+                        const stillExists = openPositions.some(p =>
+                            p.symbol === position.symbol &&
+                            Math.abs(parseFloat(p.positionAmt)) > 0
+                        );
+                        if (!stillExists) {
+                            await this.closePositionByOrder(positionId, position, 'STOP_LOSS', {
+                                avgPrice: position.stopLoss
+                            });
+                            continue; // 🎯 ADD THIS CONTINUE!
+                        }
+                    }
+                }
+            }
         } catch (error) {
             this.logger.error(error.message, 'Monitoring error');
         }
     }
 
-    // ✅ SIMPLIFIED CLEANUP
-    async cleanupOrphanedOrders(openPositions) {
-        try {
-            const allOpenOrders = await this.client.getOpenOrders();
+    async closePositionByOrder(positionId, position, reason, order) {
+        // 🎯 LOG FIRST before any cleanup
+        const exitPrice = parseFloat(order.avgPrice);
+        const pnl = position.side === 'BUY'
+            ? (exitPrice - position.entryPrice) * position.quantity
+            : (position.entryPrice - exitPrice) * position.quantity;
 
-            const activeSymbols = new Set(
-                openPositions
-                    .filter(p => Math.abs(parseFloat(p.positionAmt)) > 0)
-                    .map(p => p.symbol)
-            );
+        this.logger.position(
+            `CLOSED - ${position.symbol} | ${position.side} | ` +
+            `${position.quantity} @ $${position.entryPrice.toFixed(4)} | ` +
+            `Exit: $${exitPrice.toFixed(4)} | PnL: $${pnl.toFixed(2)} | Reason: ${reason} | ` +
+            `TradeID: ${position.positionId}`
+        );
 
-            for (const order of allOpenOrders) {
-                if (!activeSymbols.has(order.symbol) &&
-                    ['TAKE_PROFIT', 'STOP_MARKET'].includes(order.type)) {
-
-                    await this.client.cancelOrder(order.symbol, order.orderId);
-                    this.logger.debug(`🧹 Canceled orphan: ${order.symbol} ${order.orderId}`);
-                }
-            }
-        } catch (error) {
-            this.logger.debug(`Cleanup error: ${error.message}`);
-        }
-    }
-
-    async processClosedPositions(openPositions) {
-        const positionsToClose = [];
-
-        for (const [positionId, position] of this.positions.entries()) {
-            if (!position?.symbol || position.closing) continue;
-
-            const stillOpen = openPositions.some(p =>
-                p.symbol === position.symbol &&
-                Math.abs(parseFloat(p.positionAmt)) > 0
-            );
-
-            if (!stillOpen) {
-                positionsToClose.push([positionId, { ...position, closing: true }]);
-            }
-        }
-
-        for (const [positionId, position] of positionsToClose) {
-            await this.logClosedPosition(position);
-            this.cleanupPositionOrders(position.symbol);
-            this.positions.delete(positionId);
-            this.setCooldown(position.symbol, config.trading.cooldowns.afterClose);
-        }
+        // 🎯 CLEANUP AFTER LOGGING
+        this.positions.delete(positionId);
+        this.cleanupPositionOrders(position.symbol);
+        this.setCooldown(position.symbol, config.trading.cooldowns.afterClose);
     }
 
     cleanupPositionOrders(symbol) {
         this.orders.delete(`${symbol}_TP`);
         this.orders.delete(`${symbol}_SL`);
-        this.logger.debug(`🧹 Cleaned tracking for ${symbol}`);
+        this.logger.debug(`🧹 Cleaned orders for ${symbol}`);
     }
 
-    async logClosedPosition(position) {
-        try {
-            if (!position?.symbol) {
-                this.logger.position(`CLOSED - Invalid position removed`);
-                return;
-            }
+// === STATE RECOVERY ===
+async recoverLiveState() {
+    try {
+        this.logger.info('Recovering live state...');
 
-            // ✅ FIND ACTUAL EXIT PRICE FROM ORDERS
-            const exitInfo = await this.findActualExitPrice(position);
+        const [openPositions, allOpenOrders] = await Promise.all([
+            this.client.getOpenPositions(),
+            this.client.getOpenOrders()
+        ]);
 
-            const pnl = position.side === 'BUY'
-                ? (exitInfo.exitPrice - position.entryPrice) * position.quantity
-                : (position.entryPrice - exitInfo.exitPrice) * position.quantity;
+        const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
+        this.logger.info(`Found ${activePositions.length} live positions and ${allOpenOrders.length} open orders`);
 
-            this.logger.position(
-                `CLOSED - ${position.symbol} | ${position.side} | ` +
-                `${position.quantity} @ $${position.entryPrice.toFixed(4)} | ` +
-                `Exit: $${exitInfo.exitPrice.toFixed(4)} | PnL: $${pnl.toFixed(2)} | Reason: ${exitInfo.exitReason}`
+        // 🆕 FIX: Clean up positions that no longer exist on Binance
+        for (const [positionId, trackedPosition] of this.positions.entries()) {
+            const stillExists = activePositions.some(binancePos => 
+                binancePos.symbol === trackedPosition.symbol &&
+                Math.abs(parseFloat(binancePos.positionAmt) - trackedPosition.quantity) < 0.001
             );
-        } catch (error) {
-            this.logger.position(`CLOSED - ${position.symbol} | ${position.side} | Error: ${error.message}`);
+            
+            if (!stillExists) {
+                this.logger.debug(`🔄 Removing tracked position that no longer exists: ${trackedPosition.symbol}`);
+                this.positions.delete(positionId);
+                this.cleanupPositionOrders(trackedPosition.symbol);
+            }
         }
-    }
 
-    // ✅ OPTIMIZED METHOD: Find actual exit price using tracked orders first
-    async findActualExitPrice(position) {
-        const tpOrderId = this.orders.get(`${position.symbol}_TP`);
-        const slOrderId = this.orders.get(`${position.symbol}_SL`);
+        // 🆕 FIX: Only recover positions that ACTUALLY EXIST on Binance
+        let recoveredCount = 0;
+        for (const binancePosition of activePositions) {
+            const symbol = binancePosition.symbol;
+            const positionAmt = parseFloat(binancePosition.positionAmt);
+            const quantity = Math.abs(positionAmt);
+            const entryPrice = parseFloat(binancePosition.entryPrice);
+            const side = positionAmt > 0 ? 'BUY' : 'SELL';
 
-        try {
-            // ✅ FIRST: Check our tracked TP/SL orders (most common case)
-            if (tpOrderId) {
-                try {
-                    const tpOrder = await this.client.getOrder(position.symbol, tpOrderId);
-                    if (tpOrder.status === 'FILLED') {
-                        return {
-                            exitPrice: parseFloat(tpOrder.avgPrice),
-                            exitReason: 'TAKE_PROFIT',
-                            orderId: tpOrderId
-                        };
-                    }
-                } catch (error) {
-                    // Order might not exist (already filled and gone from recent history)
-                    this.logger.debug(`TP order ${tpOrderId} not found, may be filled`);
-                }
-            }
-
-            if (slOrderId) {
-                try {
-                    const slOrder = await this.client.getOrder(position.symbol, slOrderId);
-                    if (slOrder.status === 'FILLED') {
-                        return {
-                            exitPrice: parseFloat(slOrder.avgPrice),
-                            exitReason: 'STOP_LOSS',
-                            orderId: slOrderId
-                        };
-                    }
-                } catch (error) {
-                    // Order might not exist (already filled and gone from recent history)
-                    this.logger.debug(`SL order ${slOrderId} not found, may be filled`);
-                }
-            }
-
-            // ✅ SECOND: Check if orders are still in open orders (to detect manual cancellation)
-            const openOrders = await this.client.getOpenOrders(position.symbol);
-            const tpStillOpen = openOrders.some(order => order.orderId === tpOrderId);
-            const slStillOpen = openOrders.some(order => order.orderId === slOrderId);
-
-            // If our TP/SL are gone but we couldn't get their status, they were likely filled
-            if (tpOrderId && !tpStillOpen) {
-                this.logger.debug(`TP order ${tpOrderId} missing from open orders, assuming filled`);
-                // Use TP price as best estimate
-                return {
-                    exitPrice: position.takeProfit,
-                    exitReason: 'TAKE_PROFIT',
-                    orderId: tpOrderId
-                };
-            }
-
-            if (slOrderId && !slStillOpen) {
-                this.logger.debug(`SL order ${slOrderId} missing from open orders, assuming filled`);
-                // Use SL price as best estimate
-                return {
-                    exitPrice: position.stopLoss,
-                    exitReason: 'STOP_LOSS',
-                    orderId: slOrderId
-                };
-            }
-
-            // ✅ THIRD: Fallback to getAllOrders only if we can't determine from our tracked orders
-            const allOrders = await this.client.getAllOrders(position.symbol);
-            const potentialExitOrders = allOrders.filter(order =>
-                order.status === 'FILLED' &&
-                (
-                    (position.side === 'BUY' && order.side === 'SELL') ||
-                    (position.side === 'SELL' && order.side === 'BUY')
-                ) &&
-                Math.abs(parseFloat(order.executedQty) - position.quantity) < 0.0001 &&
-                Date.parse(order.updateTime) > position.timestamp
+            // Check if we're already tracking this exact position
+            const alreadyTracked = Array.from(this.positions.values()).some(p =>
+                p.symbol === symbol &&
+                Math.abs(p.quantity - quantity) < 0.001 &&
+                Math.abs(p.entryPrice - entryPrice) < 0.001 &&
+                p.side === side
             );
 
-            if (potentialExitOrders.length > 0) {
-                const exitOrder = potentialExitOrders[0];
-                const exitPrice = parseFloat(exitOrder.avgPrice || exitOrder.price);
+            if (!alreadyTracked) {
+                // Find TP/SL orders for this symbol
+                const symbolOrders = allOpenOrders.filter(o => o.symbol === symbol);
+                const tpOrder = symbolOrders.find(o => o.type.includes('TAKE_PROFIT'));
+                const slOrder = symbolOrders.find(o => o.type.includes('STOP'));
 
-                return {
-                    exitPrice,
-                    exitReason: this.getExitReasonFromOrder(exitOrder),
-                    orderId: exitOrder.orderId
-                };
-            }
+                const positionId = `recovered_${symbol}_${Date.now()}_${recoveredCount}`;
 
-        } catch (error) {
-            this.logger.debug(`Error finding exit price for ${position.symbol}: ${error.message}`);
-        }
-
-        // ✅ FINAL FALLBACK: Use current price from getPrice() method
-        try {
-            const currentPrice = await this.client.getPrice(position.symbol);
-            return {
-                exitPrice: currentPrice,
-                exitReason: 'UNKNOWN',
-                orderId: null
-            };
-        } catch (fallbackError) {
-            return {
-                exitPrice: position.entryPrice,
-                exitReason: 'UNKNOWN',
-                orderId: null
-            };
-        }
-    }
-
-    // ✅ HELPER: Determine exit reason from order type
-    getExitReasonFromOrder(order) {
-        if (order.type === 'TAKE_PROFIT' || order.type === 'TAKE_PROFIT_MARKET') return 'TAKE_PROFIT';
-        if (order.type === 'STOP_MARKET' || order.type === 'STOP_LOSS') return 'STOP_LOSS';
-        if (order.type === 'MARKET') return 'MANUAL_CLOSE';
-        if (order.type === 'LIMIT') return 'LIMIT_CLOSE';
-        return 'UNKNOWN';
-    }
-
-    // === STATE RECOVERY ===
-    async recoverLiveState() {
-        try {
-            this.logger.info('Recovering live state...');
-
-            const [openPositions, openOrders] = await Promise.all([
-                this.client.getOpenPositions(),
-                this.client.getOpenOrders()
-            ]);
-
-            const activePositions = openPositions.filter(p => Math.abs(parseFloat(p.positionAmt)) > 0);
-            this.logger.info(`Found ${activePositions.length} live positions and ${openOrders.length} open orders`);
-
-            const existingSymbols = new Set(Array.from(this.positions.values()).map(p => p.symbol));
-
-            // ✅ FIRST: Check for positions that closed while bot was offline
-            await this.cleanupClosedPositions(openPositions);
-
-            // ✅ SECOND: Recover currently open positions
-            for (const position of activePositions) {
-                if (existingSymbols.has(position.symbol)) {
-                    this.logger.debug(`🔄 ${position.symbol} already tracked, skipping recovery`);
-                    continue;
-                }
-
-                const positionData = this.createPositionData(position);
-                const recoveryId = `${position.symbol}_recovered`;
-
-                // Restore order tracking
-                const symbolOrders = openOrders.filter(order => order.symbol === position.symbol);
-                for (const order of symbolOrders) {
-                    if (order.type === 'TAKE_PROFIT' || order.type === 'TAKE_PROFIT_MARKET') {
-                        this.orders.set(`${position.symbol}_TP`, order.orderId);
-                        this.logger.debug(`Recovered TP order: ${order.orderId}`);
-                    } else if (order.type === 'STOP_MARKET' || order.type === 'STOP_LOSS') {
-                        this.orders.set(`${position.symbol}_SL`, order.orderId);
-                        this.logger.debug(`Recovered SL order: ${order.orderId}`);
-                    }
-                }
-
-                this.positions.set(recoveryId, {
-                    ...positionData,
-                    recovered: true,
-                    marketOrderId: recoveryId
+                this.positions.set(positionId, {
+                    positionId,
+                    symbol,
+                    side: side, // 🎯 Use actual side from Binance position
+                    quantity,
+                    entryPrice,
+                    timestamp: Date.now(),
+                    stopLoss: slOrder ? parseFloat(slOrder.stopPrice) : 0,
+                    takeProfit: tpOrder ? parseFloat(tpOrder.price) : 0,
+                    marketOrderId: positionId,
+                    tpOrderId: tpOrder?.orderId,
+                    slOrderId: slOrder?.orderId,
+                    recovered: true
                 });
 
-                this.logger.position(`Recovered live position: ${position.symbol}: ${positionData.quantity} (${positionData.side})`);
-                this.setCooldown(position.symbol, 30);
+                // Store order mappings
+                if (tpOrder) {
+                    this.orders.set(`${symbol}_TP`, tpOrder.orderId);
+                    this.orders.set(`order_${tpOrder.orderId}`, { type: 'TP', symbol });
+                }
+                if (slOrder) {
+                    this.orders.set(`${symbol}_SL`, slOrder.orderId);
+                    this.orders.set(`order_${slOrder.orderId}`, { type: 'SL', symbol });
+                }
+
+                this.logger.position(
+                    `OPEN - ${symbol} | ${side} | ${quantity} @ $${entryPrice.toFixed(4)} | ` +
+                    `SL: $${(slOrder ? parseFloat(slOrder.stopPrice) : 0).toFixed(4)} | TP: $${(tpOrder ? parseFloat(tpOrder.price) : 0).toFixed(4)} | ` +
+                    `Recovered: true | TradeID: ${positionId}`
+                );
+                recoveredCount++;
             }
-
-            this.logger.info('Recovery completed');
-        } catch (error) {
-            this.logger.error(error.message, 'Recovery failed');
         }
-    }
 
-    // ✅ NEW METHOD: Cleanup positions that closed while bot was offline
-    async cleanupClosedPositions(currentOpenPositions) {
-        const currentOpenSymbols = new Set(
-            currentOpenPositions
-                .filter(p => Math.abs(parseFloat(p.positionAmt)) > 0)
-                .map(p => p.symbol)
-        );
-
-        const positionsToClose = [];
-
+        // 🆕 FIX: Clean up any recovered positions that don't actually exist
         for (const [positionId, position] of this.positions.entries()) {
-            if (!position?.symbol || position.closing) continue;
-
-            // If position symbol is not in currently open positions, it closed while bot was offline
-            if (!currentOpenSymbols.has(position.symbol)) {
-                positionsToClose.push([positionId, position]);
+            if (position.recovered) {
+                const stillExists = activePositions.some(bp => 
+                    bp.symbol === position.symbol &&
+                    Math.abs(parseFloat(bp.positionAmt) - position.quantity) < 0.001
+                );
+                if (!stillExists) {
+                    this.logger.warn(`🔄 Removing phantom recovered position: ${position.symbol}`);
+                    this.positions.delete(positionId);
+                    this.cleanupPositionOrders(position.symbol);
+                }
             }
         }
 
-        // Log and cleanup all positions that closed while offline
-        for (const [positionId, position] of positionsToClose) {
-            this.logger.info(`🔄 Position ${position.symbol} closed while bot was offline, logging now...`);
-            await this.logClosedPosition(position);
-            this.cleanupPositionOrders(position.symbol);
-            this.positions.delete(positionId);
-        }
+        this.logger.info(`Recovery completed: ${this.positions.size} positions tracked (${recoveredCount} new)`);
 
-        if (positionsToClose.length > 0) {
-            this.logger.info(`Cleaned up ${positionsToClose.length} positions that closed while bot was offline`);
-        }
+    } catch (error) {
+        this.logger.error(error.message, 'Recovery failed');
     }
-    // === STATUS & LOGS ===
-    async getStatus() {
-        try {
-            const [account, positions, openOrders] = await Promise.all([
-                this.client.getAccountInfo(),
-                this.client.getOpenPositions(),
-                this.client.getOpenOrders()
-            ]);
-
-            return {
-                running: this.isRunning,
-                environment: config.environment,
-                account: {
-                    balance: parseFloat(account.availableBalance),
-                    totalBalance: parseFloat(account.totalWalletBalance),
-                    unrealizedPnl: parseFloat(account.totalUnrealizedProfit)
-                },
-                positions: positions.length,
-                openOrders: openOrders.length
-            };
-        } catch (error) {
-            this.logger.error(error.message, 'Status check error');
-            return {
-                running: this.isRunning,
-                environment: config.environment,
-                error: error.message
-            };
-        }
-    }
+}
 }
 
 export default ScalpingBot;

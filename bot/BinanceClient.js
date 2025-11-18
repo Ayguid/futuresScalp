@@ -13,7 +13,6 @@ class BinanceClient {
         this.rateLimiter = new RateLimitedQueue(1000, 100, 10);
     }
 
-    // ✅ FIXED: Better error handling that preserves Binance error details
     async makeAxiosCall(config) {
         return new Promise((resolve, reject) => {
             const wrappedFn = async (done) => {
@@ -197,7 +196,6 @@ class BinanceClient {
             console.log(`✅ ${symbol} leverage set to: ${leverage}x`);
             return result;
         } catch (error) {
-            // ✅ NOW PRESERVES DETAILED ERROR MESSAGES
             console.log(`🔍 Leverage error details for ${symbol}:`);
             console.log(`   Error code: ${error.code}`);
             console.log(`   Error message: ${error.msg || error.message}`);
@@ -207,7 +205,7 @@ class BinanceClient {
                 return { alreadySet: true };
             } else {
                 console.error(`❌ Error setting leverage for ${symbol}:`, error.msg || error.message);
-                throw error; // ✅ Now throws the detailed error object
+                throw error;
             }
         }
     }
@@ -227,7 +225,6 @@ class BinanceClient {
             console.log(`✅ ${symbol} margin mode set to: ${marginType}`);
             return result;
         } catch (error) {
-            // ✅ NOW PRESERVES DETAILED ERROR MESSAGES
             console.log(`🔍 Margin mode error details for ${symbol}:`);
             console.log(`   Error code: ${error.code}`);
             console.log(`   Error message: ${error.msg || error.message}`);
@@ -237,7 +234,7 @@ class BinanceClient {
                 return { alreadySet: true };
             } else {
                 console.error(`❌ Error setting margin mode for ${symbol}:`, error.msg || error.message);
-                throw error; // ✅ Now throws the detailed error object
+                throw error;
             }
         }
     }
@@ -331,18 +328,6 @@ class BinanceClient {
         return await this.privateRequest('POST', '/fapi/v1/batchOrders', {
             batchOrders: batchOrdersParam
         });
-    }
-
-    // Utility methods
-    generateSignature(queryString) {
-        return crypto
-            .createHmac('sha256', this.config.secretKey)
-            .update(queryString)
-            .digest('hex');
-    }
-
-    getTimestamp() {
-        return Date.now().toString();
     }
 
     async getSymbolInfo(symbol) {

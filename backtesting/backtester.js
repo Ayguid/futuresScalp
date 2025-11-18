@@ -583,79 +583,83 @@ class BinanceCSVBacktester {
         return positionsToClose.length;
     }
 
-    async analyzeSymbolInCycle(symbol, data, currentTime, cycleIndex) {
-        try {
-            const currentData = data.slice(0, cycleIndex + 1);
-            
-            if (currentData.length < 100) return false;
+async analyzeSymbolInCycle(symbol, data, currentTime, cycleIndex) {
+    try {
+        const currentData = data.slice(0, cycleIndex + 1);
+        if (currentData.length < 100) return false;
 
-            const currentKline = currentData[currentData.length - 1];
-            const currentPrice = currentKline.close;
+        const currentKline = currentData[currentData.length - 1];
+        const currentPrice = currentKline.close;
 
-            const signal = this.strategy.analyze(currentData, symbol);
-            
-            if (signal.signal !== 'HOLD') {
-                const position = await this.enterPosition(symbol, signal.signal, currentPrice, currentTime, currentData);
-                return position !== null;
-            }
-            
-            return false;
-        } catch (error) {
-            console.error(`❌ Error analyzing ${symbol}:`, error.message);
-            return false;
+        const signal = this.strategy.analyze(currentData, symbol);
+        
+        if (signal.signal !== 'HOLD') {
+            // ✅ Pass both the signal AND the current price/klines
+            const position = await this.enterPosition(
+                symbol, 
+                signal,      // Pass signal for indicators
+                currentPrice, // Still pass current price
+                currentTime, 
+                currentData
+            );
+            return position !== null;
         }
+        
+        return false;
+    } catch (error) {
+        console.error(`❌ Error analyzing ${symbol}:`, error.message);
+        return false;
+    }
+}
+
+async enterPosition(symbol, signal, signalPrice, entryTime, klines) {
+    if (this.openPositions.size >= config.trading.maxOpenPositions) return null;
+    if (this.hasOpenPosition(symbol)) return null;
+
+    // Extract from signal object
+    const side = signal.signal;
+    // Use signalPrice parameter (not signal.price which might be undefined)
+    
+    // 🆕 CALCULATE VOLATILITY FOR SLIPPAGE
+    const volatility = this.calculateVolatility(klines);
+    const recentVolume = klines.length > 0 ? klines[klines.length - 1].volume : 0;
+    
+    // 🆕 APPLY REALISTIC ENTRY SLIPPAGE
+    const actualEntryPrice = this.applyEntrySlippage(signalPrice, side, recentVolume, volatility);
+    
+    // 🆕 USE REALISTIC POSITION SIZING
+    const baseQuantity = this.strategy.calculatePositionSize(this.balance, actualEntryPrice, symbol);
+    const actualQuantity = baseQuantity;
+    
+    if (actualQuantity <= 0) return null;
+
+    const position = {
+        symbol: symbol,
+        side: side,
+        signalPrice: signalPrice,
+        entryPrice: actualEntryPrice,
+        entryTime: entryTime,
+        quantity: actualQuantity,
+        leverage: config.trading.leverage,
+        marginUsed: actualQuantity * actualEntryPrice / config.trading.leverage,
+        entryBalance: this.balance,
+        // ✅ PASS INDICATORS FROM SIGNAL TO ENABLE ATR STOPS
+        levels: this.strategy.calculateLevels(actualEntryPrice, side, symbol, signal.indicators),
+        entrySlippage: Math.abs(actualEntryPrice - signalPrice) * actualQuantity,
+        partialFill: false,
+        unfilledAmount: 0
+    };
+
+    this.openPositions.set(symbol, position);
+    this.results.totalSlippage += position.entrySlippage;
+    
+    if (this.currentCycle % 200 === 0) {
+        console.log(`   🎯 ${symbol} ENTERED ${side} at $${actualEntryPrice.toFixed(2)} (signal: $${signalPrice.toFixed(2)})`);
+        console.log(`      Slippage: $${position.entrySlippage.toFixed(2)} | Quantity: ${actualQuantity.toFixed(6)}`);
     }
 
-    async enterPosition(symbol, side, signalPrice, entryTime, klines) {
-        if (this.openPositions.size >= config.trading.maxOpenPositions) return null;
-        if (this.hasOpenPosition(symbol)) return null;
-
-        // 🆕 CALCULATE VOLATILITY FOR SLIPPAGE
-        const volatility = this.calculateVolatility(klines);
-        const recentVolume = klines.length > 0 ? klines[klines.length - 1].volume : 0;
-        
-        // 🆕 APPLY REALISTIC ENTRY SLIPPAGE
-        const actualEntryPrice = this.applyEntrySlippage(signalPrice, side, recentVolume, volatility);
-        
-        // 🆕 USE REALISTIC POSITION SIZING
-        const baseQuantity = this.strategy.calculatePositionSize(this.balance, actualEntryPrice, symbol);
-        
-        // 🆕 SIMULATE PARTIAL FILLS
-        //const execution = this.simulateOrderExecution(baseQuantity, 'MARKET');
-        //const actualQuantity = execution.filled;
-        const actualQuantity = baseQuantity;
-        if (actualQuantity <= 0) return null;
-
-        const position = {
-            symbol: symbol,
-            side: side,
-            signalPrice: signalPrice,
-            entryPrice: actualEntryPrice,
-            entryTime: entryTime,
-            quantity: actualQuantity,
-            leverage: config.trading.leverage,
-            marginUsed: actualQuantity * actualEntryPrice / config.trading.leverage,
-            entryBalance: this.balance,
-            levels: this.strategy.calculateLevels(actualEntryPrice, side, symbol),
-            entrySlippage: Math.abs(actualEntryPrice - signalPrice) * actualQuantity,
-            partialFill: false,//execution.partial,
-            unfilledAmount: 0//execution.unfilledAmount || 0
-        };
-
-        this.openPositions.set(symbol, position);
-        this.results.totalSlippage += position.entrySlippage;
-        //this.results.partialFillLoss += execution.partialLoss || 0;
-        
-        if (this.currentCycle % 200 === 0) {
-            console.log(`   🎯 ${symbol} ENTERED ${side} at $${actualEntryPrice.toFixed(2)} (signal: $${signalPrice.toFixed(2)})`);
-            console.log(`      Slippage: $${position.entrySlippage.toFixed(2)} | Quantity: ${actualQuantity.toFixed(6)}`);
-            /*if (execution.partial) {
-                console.log(`      ⚠️ Partial fill: ${execution.unfilledAmount.toFixed(6)} unfilled`);
-            }*/
-        }
-
-        return position;
-    }
+    return position;
+}
 
     hasOpenPosition(symbol) {
         return this.openPositions.has(symbol);
