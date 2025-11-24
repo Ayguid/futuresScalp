@@ -129,13 +129,11 @@ const config = {
     safety: {//removed, will be used later
         testnet: {
             continuousMonitoring: true,
-            orphanCheckFrequency: 1.0,
             emergencyRepair: true,
             verificationDelay: 3000
         },
         mainnet: {
             continuousMonitoring: false,
-            orphanCheckFrequency: 0.05,
             emergencyRepair: false,
             verificationDelay: 1500
         }
@@ -161,13 +159,8 @@ config.getCurrentConfig = function () {
 };
 
 config.getSafetyConfig = function () {
-    const isMainnet = this.environment === 'mainnet';
-    return {
-        verificationDelay: isMainnet ? 1500 : 3000,
-        maxRetries: isMainnet ? 2 : 3,
-        emergencyTimeout: 10000,
-        ...this.safety
-    };
+    const env = this.environment; // 'testnet' or 'mainnet'
+    return this.safety[env]; // ✅ Actually use the safety config
 };
 
 config.validate = function () {

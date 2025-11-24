@@ -50,7 +50,6 @@ class SimpleScalpingStrategy extends BaseStrategy {
             const trendStrength = this.getTrendStrength(closes, ema20, ema50);
             const atrPercentage = (atr / currentPrice) * 100;
 
-            // ✅ USE CONFIG METHOD INSTEAD OF LOCAL METHOD
             const symbolConfig = this.config.getSymbolConfig(symbol);
 
             // Build indicators object for return
@@ -202,7 +201,7 @@ calculateLevels(entryPrice, side, symbol = '', indicators = {}) {
         const stopLossDistance = indicators.atr * atrMultiplier;
         const stopLossPercentActual = (stopLossDistance / entryPrice) * 100;
 
-        // ✅ FIXED: Calculate RR ratio from config to match percentage stops
+        // Calculate RR ratio from config to match percentage stops
         const configRR = takeProfitPercent / symbolConfig.risk.stopLossPercent;
         
         if (side === 'BUY') {
